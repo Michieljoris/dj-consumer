@@ -1,6 +1,8 @@
 (set-env!
  :resource-paths #{"src"}
  :dependencies '[
+                 [io.forward/yaml "1.0.6"]
+
 
                  ;; Sql queries
                  [mysql/mysql-connector-java "5.1.40"]
@@ -21,10 +23,22 @@
 
                  [yesql "0.5.3"]
 
+                 ;; String manipulation
+                 [funcool/cuerdas "2.0.3"]
+
+                 ;; https://github.com/samestep/boot-refresh
+                 ;; Task to reload clojure code automatically on save
+                 [samestep/boot-refresh "0.1.0" :scope "test"]
+
                  ;; Logging
                  [com.taoensso/timbre      "4.8.0"]
                  ;; [com.taoensso/encore      "2.90.1"]
+                 [jansi-clj "0.1.0"]
                  ]
+ )
+
+(require
+ '[samestep.boot-refresh :refer [refresh]]
  )
 
 (task-options!
@@ -35,6 +49,8 @@
 
 (deftask watch-and-install []
   (comp
+   (repl :server true)
+   (refresh)
    (watch)
    (pom)
    (jar)
