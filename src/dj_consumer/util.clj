@@ -41,3 +41,55 @@
 
 (defn keyword->underscored-string [k]
   (if k (hyphen->underscore (name k))))
+
+(defn parse-natural-number
+  "Reads and returns an integer from a string, or the param itself if
+  it's already a natural number. Returns nil if not a natural
+  number (includes 0)"
+  [s]
+  (cond
+    (and (string? s) (re-find #"^\d+$" s)) (read-string s)
+    (and (number? s) (>= s 0))  s
+    :else nil))
+
+
+(defn split-on-hyphen
+  "Splits a string on hyphens."
+  [s]
+  (str/split s #"-"))
+
+(defn split-on-underscore
+  "Splits a string on undescores."
+  [s]
+  (str/split s #"_"))
+
+(defn split-camel-case
+  "Splits a camel case string into tokens. Consecutive captial lets,
+  except for the last one, become a single token."
+  [s]
+  (-> s
+      (.replaceAll "([A-Z]+)([A-Z][a-z])" "$1-$2")
+      (.replaceAll "([a-z\\d])([A-Z])" "$1-$2")
+      (split-on-hyphen)))
+
+(defn split-camel-case-sticky
+  "Splits a camel case string, keeping consecutive capital characters
+  attached to the following token."
+  [s]
+  (split-on-hyphen (.replaceAll s "([a-z\\d])([A-Z])" "$1-$2")))
+
+(defn camel->hyphen
+  [s]
+  (str/join "-" (split-camel-case s)))
+
+(defn camel-sticky->hyphen
+  [s]
+  (str/join "-" (split-camel-case-sticky s)))
+
+(defn camel->keyword
+  ([s] (camel->keyword s nil))
+  ([s ns]
+   (let [lower-hyphen (-> s camel->hyphen str/lower)
+         ns (if ns (-> ns camel->hyphen str/lower))
+         lower-hyphen (if ns (str ns "/" lower-hyphen) lower-hyphen)]
+     (keyword lower-hyphen))))
