@@ -3,6 +3,7 @@
    [clojure.walk :as walk]
    [clj-time.core :as t]
    [clj-time.format :as tf]
+   [yaml.core :as yaml]
 
    ;; String manipulation
    [cuerdas.core :as str]
@@ -101,3 +102,24 @@
 
 (defn to-sql-time-string [t]
   (tf/unparse sql-formatter t))
+
+(defn remove-!ruby-annotations [s]
+  (str/replace s #"!ruby/[^\s]*" ""))
+
+(defn extract-rails-struct-name[s]
+  (second (re-find  #"--- *!ruby\/struct:([^\s]*)" s)))
+
+(defn extract-rails-obj-name[s]
+  (second (re-find  #"object: *!ruby\/object:([^\s]*)" s)))
+
+(defn parse-ruby-yaml [s]
+  (let [s (or s "")
+        struct-name (extract-rails-struct-name s)
+        object-name (extract-rails-obj-name s)
+        data (yaml/parse-string
+              (remove-!ruby-annotations s))
+        method-name (:method_name data)]
+    {:job (or (camel->keyword struct-name)
+              (if (and object-name method-name) (camel->keyword object-name method-name))
+              :unknown-job-id)
+     :data data}))

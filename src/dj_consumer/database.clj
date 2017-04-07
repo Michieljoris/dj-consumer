@@ -2,6 +2,7 @@
   (:require
    [dj-consumer.util :as u]
 
+   [dj-consumer.database.clauses :as cl]
    [dj-consumer.database.queries]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.database.info :as db-info]
@@ -20,6 +21,50 @@
    [jansi-clj.core :refer :all]
    )
   )
+
+(defn make-query-params [{:keys [table cols where limit order-by]}]
+  {:table table
+   :cols cols
+   :where-clause (if where (cl/conds->sqlvec table "" nil (cl/conds->sqlvec table "" nil nil where) where))
+   :limit-clause (if limit (cl/make-limit-clause limit))
+   :order-by-clause (if order-by (cl/order-by->sqlvec table "" nil order-by))})
+
+(defn make-reserve-scope [{:keys [worker-id table queues min-priority max-priority max-run-time cols]}]
+  (let [nil-queue? (contains? (set queues) nil)
+        queues (remove nil? queues)
+        run-at-before-marker "run-at-before"
+        locked-at-before-marker "locked-at-before"]
+    (make-query-params {:table table
+                        :cols cols
+                        ;; From delayed_job:
+                        ;; (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL"
+                        :where [:and (into [[:failed-at :is :null]
+                                            [:or [[:and [[:run-at :<= run-at-before-marker]
+                                                         [:or [[:locked-at :is :null]
+                                                               [:locked-at :< locked-at-before-marker]]]]]
+                                                  [:locked-by := (str worker-id)]]]]
+                                           (remove nil?
+                                                   [(if min-priority [:priority :>= min-priority])
+                                                    (if max-priority [:priority :<= max-priority])
+                                                    (if (seq queues)
+                                                      (if nil-queue?
+                                                        [:or [[:queue :in queues] [:queue :is :null]]]
+                                                        [:queue :in queues])
+                                                      (if nil-queue? [:queue :is :null]))]))]
+                        :limit {:count 1}
+                        :order-by [[:priority :asc] [:run-at :asc]]})))
+
+(defn make-lock-job-scope [{:keys [worker-id max-run-time reserve-scope] :as env} now]
+  (let [now-minus-max-run-time (t/minus now (t/seconds max-run-time))
+        now-minus-max-run-time (u/to-sql-time-string now-minus-max-run-time)
+        now (u/to-sql-time-string now)
+        reserve-scope (update reserve-scope :where-clause
+                              #(mapv (fn [e] (condp = e
+                                               "run-at-before" now
+                                               "locked-at-before" now-minus-max-run-time
+                                               e)) %))]
+    (merge reserve-scope {:updates {:locked-by (str worker-id)
+                                    :locked-at now}})))
 
 (defn sql
   "Executes fun with db connection as second argument "

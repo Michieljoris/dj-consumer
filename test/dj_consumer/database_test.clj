@@ -1,4 +1,4 @@
-(ns dj-consumer.core-test
+(ns dj-consumer.database-test
   (:require [dj-consumer.core :as tn]
             [clojure.test :as t :refer [deftest is]]))
 
