@@ -25,13 +25,24 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
+(defn default-logger
+  ([env text level]
+   (default-logger env nil text level))
+  ([{:keys [worker-id]} {:keys [id name queue] :as job} text level]
+   (let [job-str (if job (str "Job " name " (id=" id ") " ))
+         queue-str (if queue (str "(queue=" queue ") "))
+         text (str "[" worker-id "] " job-str queue-str text)]
+     (log level text))))
+
+;; (default-logger {:worker-id "foo-worker"} {:queue "baz-q" :id 1 :name "bar-job"} "hello" :info)
+
 (def defaults {:max-attempts 25
                :max-run-time (* 3600 4) ;4 hours
                :reschedule-at (fn [now attempts] (int (+ now (Math/pow attempts 4))))
                :listen false
                :destroy-failed-jobs  false
                :poll-interval 5 ;in seconds
-               
+               :logger default-logger
                :sql-log? false
                :table :delayed-job
                :min-priority 0
@@ -58,7 +69,7 @@
                                                            [:failed-at :is :null]]]})
             ;;Retrieve locked record 
             record (first (db/sql env :get-cols-from-table query-params))]
-        (assoc record :handler (u/parse-ruby-yaml (:handler record)))))))
+        (merge record (u/parse-ruby-yaml (:handler record)))))))
 
 (defn start-poll [env stop-ch]
   (go-loop []

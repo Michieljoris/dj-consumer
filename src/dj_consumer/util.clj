@@ -119,7 +119,7 @@
         data (yaml/parse-string
               (remove-!ruby-annotations s))
         method-name (:method_name data)]
-    {:job (or (camel->keyword struct-name)
-              (if (and object-name method-name) (camel->keyword object-name method-name))
-              :unknown-job-id)
-     :data data}))
+    {:name (or (camel->keyword struct-name)
+               (if (and object-name method-name) (camel->keyword object-name method-name))
+               :unknown-job-name)
+     :payload data}))

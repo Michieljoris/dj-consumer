@@ -1,6 +1,14 @@
 -- :name select-all-from
 SELECT * from :i:table
 
+-- :name inc-attempts :! :n
+update :i:table
+  set attempts = attempts + 1
+  where id = :id
+
+-- :name delete-record :! :n
+delete from :i:table where id = :id
+
 -- :name update-record :! :n
 /* :require [clojure.string :as string]
             [hugsql.parameters :refer [identifier-param-quote]] */

@@ -12,6 +12,8 @@ Add to your dependencies:
 
     [dj-consumer "0.1.0"]
 
+Replace the version with the version in build.boot
+
 Require:
 
     [dj-consumer.worker :as w]
