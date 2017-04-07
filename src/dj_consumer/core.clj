@@ -31,13 +31,12 @@
                :max-attempts 25
                :min-priority 0
                :max-priority 10
-               :read-ahead 4
                :max-run-time (* 3600 4) ;4 hours
                :reschedule-at (fn [now attempts] (int (+ now (Math/pow attempts 4))))
                :listen :false;or true/:poll or:binlog
                :destroy-failed-jobs  false
                :poll-interval 5 ;in seconds
-               :job-table :delayed-job
+               :table :delayed-job
                :queues nil ;queues to process, nil processes all.
                })
 
@@ -64,17 +63,17 @@
                                                   [:locked-by := (str worker-id)]]]]
                                            (remove nil?
                                                    [(if min-priority [:priority :>= min-priority])
-                                                    (if max-priority [:priority :>= max-priority])
+                                                    (if max-priority [:priority :<= max-priority])
                                                     (if (seq queues)
                                                       (if nil-queue?
                                                         [:or [[:queue :in queues] [:queue :is :null]]]
                                                         [:queue :in queues])
                                                       (if nil-queue? [:queue :is :null]))]))]
-                        :order-by-clause [[:priority :asc] [:run-at :asc]]})))
+                        :limit {:count 1}
+                        :order-by [[:priority :asc] [:run-at :asc]]})))
 
-(defn make-lock-job-scope [{:keys [worker-id max-run-time reserve-scope] :as env}]
-  (let [now (t/now)
-        now-minus-max-run-time (t/minus now (t/seconds max-run-time))
+(defn make-lock-job-scope [{:keys [worker-id max-run-time reserve-scope] :as env} now]
+  (let [now-minus-max-run-time (t/minus now (t/seconds max-run-time))
         now-minus-max-run-time (u/to-sql-time-string now-minus-max-run-time)
         now (u/to-sql-time-string now)
         reserve-scope (update reserve-scope :where-clause
@@ -82,29 +81,55 @@
                                                "run-at-before" now
                                                "locked-at-before" now-minus-max-run-time
                                                e)) %))]
-    (merge reserve-scope {:updates {:locked-by worker-id
-                                    :locked-at now}
-                          :limit {:count 1}})))
+    (merge reserve-scope {:updates {:locked-by (str worker-id)
+                                    :locked-at now}})))
 
-;; (defn reserve-job [env]
-;;   (let [lock-job-scope (make-lock-job-scope env)
-;;         locked-job-count (db/sql env :update-record lock-job-scope)
-;;         ]
-;;     (if (pos? locked-job-count)
-;;       ;;TODO
-;;       ;; where(locked_at: now, locked_by: worker.name, failed_at: nil).first
+(defn remove-!ruby-annotations [s]
+  (str/replace s #"!ruby/[^\s]*" ""))
 
-;;       ;(map (fn [{:keys [handler] :as record}] (assoc record :handler (parse-ruby-yaml handler))))
-;;       :returning-job)
-;;     ))
+(defn extract-rails-struct-name[s]
+  (second (re-find  #"--- *!ruby\/struct:([^\s]*)" s)))
+
+(defn extract-rails-obj-name[s]
+  (second (re-find  #"object: *!ruby\/object:([^\s]*)" s)))
+
+(defn parse-ruby-yaml [s]
+  (let [s (or s "")
+        struct-name (extract-rails-struct-name s)
+        object-name (extract-rails-obj-name s)
+        data (yaml/parse-string
+              (remove-!ruby-annotations s))
+        method-name (:method_name data)]
+    {:job (or (u/camel->keyword struct-name)
+              (if (and object-name method-name) (u/camel->keyword object-name method-name))
+              :unknown-job-id)
+     :data data}))
+
+(defn reserve-job [{:keys [table worker-id] :as env}]
+  (let [now (t/now)
+        lock-job-scope (make-lock-job-scope env now)
+        ;;Lock a job record
+        locked-job-count (db/sql env :update-record lock-job-scope)]
+    (if (pos? locked-job-count)
+      (let [now (u/to-sql-time-string now)
+            query-params (make-query-params {:table table
+                                             :where [:and [[:locked-at := now]
+                                                           [:locked-by := (str worker-id)]
+                                                           [:failed-at :is :null]]]})
+            ;;Retrieve locked record by
+            record (first (db/sql env :get-cols-from-table query-params))]
+        (assoc record :handler (parse-ruby-yaml (:handler record)))))))
+
 
 (defprotocol IWorker
   (start [this])
   (stop [this]))
 
-(defrecord Worker [config]
+(defrecord Worker [env]
   IWorker
-  (start [this] (info "Starting worker"))
+  (start [this] (info "Starting worker")
+    (pprint (dissoc (reserve-job env) :handler))
+    )
   (stop [this]))
 
 (defn make-worker[{:keys [db-conn db-config] :as env}]
@@ -137,28 +162,6 @@
 ;; (a/put! input-ch "hello")
 ;; (a/put!  stop-ch "hello")
 
-
-(defn remove-!ruby-annotations [s]
-  (str/replace s #"!ruby/[^\s]*" ""))
-
-(defn extract-rails-struct-name[s]
-  (second (re-find  #"--- *!ruby\/struct:([^\s]*)" s)))
-
-(defn extract-rails-obj-name[s]
-  (second (re-find  #"object: *!ruby\/object:([^\s]*)" s)))
-
-(defn parse-ruby-yaml [s]
-  (let [s (or s "")
-        struct-name (extract-rails-struct-name s)
-        object-name (extract-rails-obj-name s)
-        data (yaml/parse-string
-              (remove-!ruby-annotations s))
-        method-name (:method_name data)
-        object-method (str object-name method-name)]
-    {:job (or (u/camel->keyword struct-name)
-              (if (and object-name method-name) (u/camel->keyword object-name method-name))
-              :unknown-job-id)
-     :data data}))
 
 (def job-queue (atom []))
 

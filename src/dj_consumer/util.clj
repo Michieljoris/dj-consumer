@@ -89,11 +89,11 @@
   (str/join "-" (split-camel-case-sticky s)))
 
 (defn camel->keyword
-  ([s] (camel->keyword s nil))
-  ([s ns]
+  ([s] (camel->keyword nil s))
+  ([ns s]
    (if (string? s)
-     (let [lower-hyphen (-> s camel->hyphen str/lower)
-           ns (if ns (-> ns camel->hyphen str/lower))
+     (let [lower-hyphen (-> s camel->hyphen str/lower (str/strip-prefix ":"))
+           ns (if ns (-> ns camel->hyphen str/lower (str/strip-prefix ":")))
            lower-hyphen (if ns (str ns "/" lower-hyphen) lower-hyphen)]
        (keyword lower-hyphen)))))
 

@@ -39,7 +39,7 @@
                  (assoc params
                         :table (db-info/table-name (:table params))
                         :updates
-                        (u/transform-keys (comp u/hyphen->underscore name) (:updates params))
+                        (u/transform-keys (comp keyword u/hyphen->underscore name) (:updates params))
                         )
                  ;; :get-joined-rows
                  ;; ;; When t1==t2 aliases kick in, see admin.sql
@@ -102,13 +102,13 @@
 ;; (pprint n2)
 ;; (t/plus n2 (t/seconds 3600))
 ;; ;
-                                        ; => #inst "2017-04-06T23:15:07.000000000-00:00"
-;; (def env {:sql-log? true
-;;           :db-conn (db-conn/make-db-conn {:user "root"
-;;                                           :password ""
-;;                                           :url "//localhost:3306/"
-;;                                           :db-name "chin_minimal"
-;;                                           ;; :db-name "chinchilla_development"
-;;                                           })})
+;;                                         => #inst "2017-04-06T23:15:07.000000000-00:00"
+(def env {:sql-log? true
+          :db-conn (db-conn/make-db-conn {:user "root"
+                                          :password ""
+                                          :url "//localhost:3306/"
+                                          :db-name "chin_minimal"
+                                          ;; :db-name "chinchilla_development"
+                                          })})
 ;; (sql env :now nil)
-;; (sql env :update-record {:table :delayed-job :updates {:priority 1 :queue "foo"}})
+;; (sql env :update-record {:job-table :delayed-job :updates {:priority 1 :queue "foo"}})
