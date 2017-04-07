@@ -1,13 +1,6 @@
 -- :name select-all-from
 SELECT * from :i:table
 
--- UPDATE [LOW_PRIORITY] [IGNORE] table_reference
---      SET col_name1={expr1|DEFAULT} [, col_name2={expr2|DEFAULT}] ...
---      [WHERE where_condition]
---      [ORDER BY ...]
---      [LIMIT row_count]
-        ;
-
 -- :name update-record :! :n
 /* :require [clojure.string :as string]
             [hugsql.parameters :refer [identifier-param-quote]] */

@@ -7,7 +7,7 @@
    [dj-consumer.database :as db]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.util :as u]
-   [dj-consumer.job :as job]
+   [dj-consumer.job]
 
    [jdbc.pool.c3p0 :as pool]
    [clj-time.core :as t]
@@ -25,16 +25,17 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
-(def defaults {:sql-log? false
-               :min-priority 0
-               :max-priority 10
-               :max-attempts 25
+(def defaults {:max-attempts 25
                :max-run-time (* 3600 4) ;4 hours
                :reschedule-at (fn [now attempts] (int (+ now (Math/pow attempts 4))))
-               :listen :false;or true/:poll or:binlog
+               :listen false
                :destroy-failed-jobs  false
                :poll-interval 5 ;in seconds
+               
+               :sql-log? false
                :table :delayed-job
+               :min-priority 0
+               :max-priority 10
                ;;Queues to process: nil processes all, [nil] processes nil
                ;;queues, ["foo" nil] processes nil and "foo" queues
                :queues nil 

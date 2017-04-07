@@ -46,8 +46,7 @@
 
 (task-options!
  pom {:project 'dj-consumer
-       :version "0.1.0"}
- jar {:manifest {"Foo" "bar"}})
+       :version "0.1.0"})
 
 
 (deftask watch-and-install []
@@ -55,6 +54,12 @@
    (repl :server true)
    (refresh)
    (watch)
+   (pom)
+   (jar)
+   (install)))
+
+(deftask install []
+  (comp
    (pom)
    (jar)
    (install)))
