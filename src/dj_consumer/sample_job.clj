@@ -12,10 +12,11 @@
    ))
 
 
-(defmethod job/perform :invitation-expiration-reminder-job [_ job _ _]
+(defmethod job/perform :invitation-expiration-reminder-job [_ job _ c]
   (info "Doing job, sleeping 1000 ms")
   (Thread/sleep 1000)
   (info "Woke up!. Done the job " )
+  ;; (put! c :done)
   )
 
 (defmethod job/after :invitation-expiration-reminder-job [_ job _ _]

@@ -12,7 +12,7 @@
 
 (defmulti before "Called before first attempt at job" (fn [k job] k))
 (defmulti perform "Perform job, fails if it throws an exception, otherwise is considered success"
-  (fn [k job done fail] k))
+  (fn [k job c] k))
 (defmulti after "Called after successful job or after doing max-attempts and still failing" (fn [k job] k))
 (defmulti success "Called after a job is successful" (fn [k job] k))
 (defmulti fail "Called after trying to perform job max-attempts and job's still failing"(fn [k job] k))
@@ -20,7 +20,7 @@
 (defmulti config "Called to get job specific configutation. Options are :max-run-time :max-attempts, destroy-failed-job" (fn [k job] k))
 
 (defmethod before :default [_ _])
-(defmethod perform :default [k _ _ _] (timbre/error "Implementation is missing for job " k))
+(defmethod perform :default [k _ _] (timbre/error "Implementation is missing for job " k))
 (defmethod after :default [_ _])
 (defmethod success :default [_ _])
 (defmethod fail :default [_ _])

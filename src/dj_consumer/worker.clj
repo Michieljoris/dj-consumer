@@ -26,19 +26,25 @@
    [jansi-clj.core :refer :all]))
 
 (def defaults {:sql-log? false
-               :max-attempts 25
                :min-priority 0
                :max-priority 10
+               :max-attempts 25
                :max-run-time (* 3600 4) ;4 hours
                :reschedule-at (fn [now attempts] (int (+ now (Math/pow attempts 4))))
                :listen :false;or true/:poll or:binlog
                :destroy-failed-jobs  false
                :poll-interval 5 ;in seconds
                :table :delayed-job
-               :queues nil ;queues to process, nil processes all.
+               ;;Queues to process: nil processes all, [nil] processes nil
+               ;;queues, ["foo" nil] processes nil and "foo" queues
+               :queues nil 
                })
 
-(defn reserve-job [{:keys [table worker-id] :as env}]
+(defn reserve-job
+  "Looks for and locks a suitable job in one transaction. Returns that
+  job if found or otherwise nil. Handler column of job record is
+  assumed to be yaml and parsed into a map with a job and data key"
+  [{:keys [table worker-id] :as env}]
   (let [now (t/now)
         lock-job-scope (db/make-lock-job-scope env now)
         ;;Lock a job record
@@ -47,12 +53,39 @@
       (let [now (u/to-sql-time-string now)
             query-params (db/make-query-params {:table table
                                              :where [:and [[:locked-at := now]
-                                                           [:locked-by := (str worker-id)]
+                                                           [:locked-by := worker-id]
                                                            [:failed-at :is :null]]]})
-            ;;Retrieve locked record by
+            ;;Retrieve locked record 
             record (first (db/sql env :get-cols-from-table query-params))]
         (assoc record :handler (u/parse-ruby-yaml (:handler record)))))))
 
+(defn start-poll [env stop-ch]
+  (go-loop []
+    )
+  )
+
+(defn start-poll
+  [env f time-in-ms]
+  (let [stop (chan)]
+    (go-loop []
+      (alt!
+        (timeout (:poll-interval env)) (do (<! (thread (f)))
+                                 (recur))
+        stop :stop))
+    stop))
+
+
+(defn start-worker [input-ch stop-ch]
+  (go-loop []
+    (let [[v ch] (alts! [input-ch stop-ch])]
+      (if (identical? ch input-ch)
+        (do
+          (info "Value on input-ch is: " v)
+          (recur))))))
+
+(defn start [env stop-ch]
+  (go-loop
+      ))
 
 (defprotocol IWorker
   (start [this])
@@ -66,7 +99,7 @@
     )
   (stop [this]))
 
-(defn make-worker[{:keys [db-conn db-config] :as env}]
+(defn make-worker[{:keys [db-conn db-config poll-interval worker-id] :as env}]
   {:pre [(some? (:worker-id env))
          (some? (or (:db-conn env) (:db-config env)))]}
   (let [env (merge defaults env)]
@@ -74,20 +107,14 @@
       (info "Initializing dj-consumer with:")
       (pprint env))
     (->Worker (assoc env
+                     :worker-id (str/strip-prefix (str worker-id) ":")
+                     :poll-interval (* 1000 poll-interval)
                      :db-conn (or db-conn (db-conn/make-db-conn db-config))
                      :reserve-scope (db/make-reserve-scope env))
               (chan))))
 
-(defn start-worker [input-ch stop-ch]
-  (go-loop []
-    (let [[v ch] (alts! [input-ch stop-ch])]
-      (if (identical? ch input-ch)
-        (do
-          (info "Value on input-ch is: " v)
-          (recur))))))
-
-(def input-ch (chan))
-(def stop-ch (chan))
+;; (def input-ch (chan))
+;; (def stop-ch (chan))
 ;; (close! stop-ch)
 ;; (close! input-ch)
 
@@ -97,14 +124,14 @@
 ;; (a/put!  stop-ch "hello")
 
 
-(def job-queue (atom []))
+;; (def job-queue (atom []))
 
 ;timeout, async, lock table, all in one sql transaction?,
-(defn try-job [{:keys [locked-at locked-by failed-at] :as job-record}]
-  (try
-    :foo
-    (catch Exception e :foo))
-  )
+;; (defn try-job [{:keys [locked-at locked-by failed-at] :as job-record}]
+;;   (try
+;;     :foo
+;;     (catch Exception e :foo))
+;;   )
 
 ;; (defn process-jobs [jobs]
 
