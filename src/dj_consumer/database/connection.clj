@@ -8,11 +8,7 @@
                  logf tracef debugf infof warnf errorf fatalf reportf
                  spy get-env log-env)]
    [clojure.pprint :refer (pprint)]
-   [jansi-clj.core :refer :all]
-   )
-  )
-
-(def db-conn (atom {}))
+   [jansi-clj.core :refer :all]))
 
 (defn make-subname [url db-name]
   (str url db-name "?zeroDateTimeBehavior=convertToNull"))
@@ -34,12 +30,3 @@
     (if pool
       (pool/make-datasource-spec db-spec)
       db-spec)))
-
-(defn set-db-conn [some-db-conn]
-  (reset! db-conn some-db-conn))
-
-(defn set-db-conn-from-config [some-db-config]
-  (set-db-conn (make-db-conn some-db-config)))
-
-(defn init [{:keys [db-conn db-config]}]
-  (if db-conn (set-db-conn db-conn) (set-db-conn-from-config db-config)))

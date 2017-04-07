@@ -1,8 +1,11 @@
 (set-env!
- :resource-paths #{"src"}
+ :resource-paths #{"src" "test"}
  :dependencies '[
                  [io.forward/yaml "1.0.6"]
 
+                 [org.clojure/core.async "0.3.441"]
+
+                 [clj-time "0.13.0"]
 
                  ;; Sql queries
                  [mysql/mysql-connector-java "5.1.40"]

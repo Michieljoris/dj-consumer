@@ -1,6 +1,8 @@
 (ns dj-consumer.util
   (:require
    [clojure.walk :as walk]
+   [clj-time.core :as t]
+   [clj-time.format :as tf]
 
    ;; String manipulation
    [cuerdas.core :as str]
@@ -89,7 +91,13 @@
 (defn camel->keyword
   ([s] (camel->keyword s nil))
   ([s ns]
-   (let [lower-hyphen (-> s camel->hyphen str/lower)
-         ns (if ns (-> ns camel->hyphen str/lower))
-         lower-hyphen (if ns (str ns "/" lower-hyphen) lower-hyphen)]
-     (keyword lower-hyphen))))
+   (if (string? s)
+     (let [lower-hyphen (-> s camel->hyphen str/lower)
+           ns (if ns (-> ns camel->hyphen str/lower))
+           lower-hyphen (if ns (str ns "/" lower-hyphen) lower-hyphen)]
+       (keyword lower-hyphen)))))
+
+(def sql-formatter (tf/formatter "yyyy-MM-dd HH:mm:ss"))
+
+(defn to-sql-time-string [t]
+  (tf/unparse sql-formatter t))

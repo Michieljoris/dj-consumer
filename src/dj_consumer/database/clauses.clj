@@ -1,6 +1,5 @@
 (ns dj-consumer.database.clauses
   (:require
-   [dj-consumer.config :refer [config]]
    [dj-consumer.database.queries :refer [clause-snip cond-snip where-snip limit-snip]]
    [dj-consumer.database.info :refer [table-name]]
 
@@ -36,7 +35,7 @@
             (str p " should be a string or number") {}))))
 
 (defn assert-col [c cols]
-  (if-not (includes? cols c)
+  (if-not (or (nil? cols) (includes? cols c))
     (throw (ex-info
             (str c " is not an allowed column for this table") {:col c :cols cols}))))
 
@@ -168,12 +167,8 @@
 (defn positive-number-or-nil? [n]
   (or (nil? n) (parse-natural-number n)))
 
-(defn make-limit-clause [{{:keys [count offset] :as limit} :limit}]
-  (if-not (and (positive-number-or-nil? count) (positive-number-or-nil? offset))
-    (throw (ex-info "Either count or offset is not a positive number" limit)))
-  (let [{:keys [limit-max]} config
-        count (or count limit-max)]
-    (limit-snip {:count count :offset offset})))
+(defn make-limit-clause [{:keys [count]}]
+  (limit-snip {:count count}))
 
 
 

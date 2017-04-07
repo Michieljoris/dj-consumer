@@ -2,7 +2,7 @@
   (:require
 
    [taoensso.timbre :as timbre
-    :refer (log  trace  debug  info  warn  error  fatal  report color-str
+    :refer (log  trace  debug  info  warn fatal  report color-str
                  logf tracef debugf infof warnf errorf fatalf reportf
                  spy get-env log-env)]
    [clojure.pprint :refer (pprint)]
@@ -17,10 +17,10 @@
 (defmulti success "Called after a job is successful" (fn [k job] k))
 (defmulti fail "Called after trying to perform job max-attempts and job's still failing"(fn [k job] k))
 (defmulti error "Called if perform throws an exception"(fn [k job exception] k))
-(defmulti config "Called to get job specific configutation. Options are :async :max-attempts, destroy-failed-jobs" (fn [k job] k))
+(defmulti config "Called to get job specific configutation. Options are :max-run-time :max-attempts, destroy-failed-job" (fn [k job] k))
 
 (defmethod before :default [_ _])
-(defmethod perform :default [k _ _ _] (error "Implementation is missing for job " k))
+(defmethod perform :default [k _ _ _] (timbre/error "Implementation is missing for job " k))
 (defmethod after :default [_ _])
 (defmethod success :default [_ _])
 (defmethod fail :default [_ _])

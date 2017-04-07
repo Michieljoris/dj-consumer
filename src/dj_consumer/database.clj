@@ -1,15 +1,16 @@
 (ns dj-consumer.database
   (:require
-   [dj-consumer.config :refer [config]]
    [dj-consumer.util :as u]
 
    [dj-consumer.database.queries]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.database.info :as db-info]
+   ;; [clj-time.jdbc]
 
    ;; String manipulation
    [cuerdas.core :as str]
 
+   [clj-time.core :as t]
    ;; logging
    [taoensso.timbre :as timbre
     :refer (log  trace  debug  info  warn  error  fatal  report color-str
@@ -22,7 +23,7 @@
 
 (defn sql
   "Executes fun with db connection as second argument "
-  [fun params]
+  [env fun params]
   (let [cols (mapv (comp u/hyphen->underscore name) (:cols params))
         params (condp = fun
                  :select-all-from
@@ -33,6 +34,13 @@
                  (assoc params
                         :table (db-info/table-name (:table params))
                         :cols cols)
+                 :now {}
+                 :update-record
+                 (assoc params
+                        :table (db-info/table-name (:table params))
+                        :updates
+                        (u/transform-keys (comp u/hyphen->underscore name) (:updates params))
+                        )
                  ;; :get-joined-rows
                  ;; ;; When t1==t2 aliases kick in, see admin.sql
                  ;; (let [t1 (:t1 params)
@@ -70,7 +78,7 @@
         fun (or (:fun params) fun)      ;if we decided to use a alternative fun, use that
         fun-str (str "dj-consumer.database.queries/" (name fun))
         fun-ref (resolve (symbol fun-str))]
-    (if (:sql-log @config)
+    (if (:sql-log? env)
       (let [s (str fun-str "-sqlvec")
             fun-sqlvec (resolve (symbol s))
             sqlvec (fun-sqlvec params)
@@ -78,11 +86,29 @@
             sql-str (str/replace sql-str "  " " ")
             sql-seq (conj (rest sqlvec) sql-str)]
         (info (green (str/join " " sql-seq)))))
-    (let [result (fun-ref @db-conn/db-conn params)]
+    (let [result (fun-ref (:db-conn env) params)]
       (condp = fun
+        :now (first (vals (first result)))
         ;; http://www.hugsql.org/#using-insert
         ;; :insert-record (:generated_key result) ;NOTE: generated_key  only works for mysql
         ;; :insert-record-no-ts (:generated_key result) ;NOTE: generated_key  only works for mysql
         ;; :delete-record (if (= 1 result) result) ;return nil if nothing is deleted
         (u/transform-keys (comp keyword u/underscore->hyphen name) result))
       )))
+
+;; (def n (sql :now nil))
+;; (pprint n)
+;; (def n2 (t/now))
+;; (pprint n2)
+;; (t/plus n2 (t/seconds 3600))
+;; ;
+                                        ; => #inst "2017-04-06T23:15:07.000000000-00:00"
+;; (def env {:sql-log? true
+;;           :db-conn (db-conn/make-db-conn {:user "root"
+;;                                           :password ""
+;;                                           :url "//localhost:3306/"
+;;                                           :db-name "chin_minimal"
+;;                                           ;; :db-name "chinchilla_development"
+;;                                           })})
+;; (sql env :now nil)
+;; (sql env :update-record {:table :delayed-job :updates {:priority 1 :queue "foo"}})

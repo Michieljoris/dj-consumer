@@ -13,7 +13,9 @@
 
 
 (defmethod job/perform :invitation-expiration-reminder-job [_ job _ _]
-  (info "Performing some job " )
+  (info "Doing job, sleeping 1000 ms")
+  (Thread/sleep 1000)
+  (info "Woke up!. Done the job " )
   )
 
 (defmethod job/after :invitation-expiration-reminder-job [_ job _ _]
