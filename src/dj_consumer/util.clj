@@ -123,3 +123,13 @@
                (if (and object-name method-name) (camel->keyword object-name method-name))
                :unknown-job-name)
      :payload data}))
+
+(defmacro time-in-ms
+  "Evaluates expr and returns the time it took in ms"
+  [expr]
+  `(let [start# (. System (nanoTime))
+         ret# ~expr]
+     (/ (double (- (. System (nanoTime)) start#)) 1000000.0)))
+
+;; (time-in-ms (Thread/sleep 1000))
+;; => 1000.221266

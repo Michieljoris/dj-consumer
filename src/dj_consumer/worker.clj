@@ -3,11 +3,13 @@
    [clojure.core.async
              :as a
              :refer [>! <! >!! <!! go go-loop chan buffer close! thread
+                     put! take!
                      alts! alts!! timeout]]
    [dj-consumer.database :as db]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.util :as u]
    [dj-consumer.job :as j]
+   [dj-consumer.humanize :as h]
 
    [jdbc.pool.c3p0 :as pool]
    [clj-time.core :as t]
@@ -24,6 +26,12 @@
                  spy get-env log-env)]
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
+
+;; https://stuartsierra.com/2015/05/27/clojure-uncaught-exceptions
+(Thread/setDefaultUncaughtExceptionHandler
+ (reify Thread$UncaughtExceptionHandler
+   (uncaughtException [_ thread ex]
+     (timbre/error ex "Uncaught exception on" (.getName thread)))))
 
 (defn default-logger
   ([env level text]
@@ -47,6 +55,8 @@
                :table :delayed-job
                :min-priority 0
                :max-priority 10
+               :max-failed-reserve-count 10
+               :throw-on-reserve-fail false
                ;;Queues to process: nil processes all, [nil] processes nil
                ;;queues, ["foo" nil] processes nil and "foo" queues
                :queues nil 
@@ -64,52 +74,55 @@
                                                     :updates {:locked-by nil :locked-at nil}
                                                     :where [:locked-by worker-id]})))
 
+(defn exception-str [e]
+  (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e))))
+
 (defn invoke-hook
   "Calls hook on job with job and any extra args"
   [method job & args]
   (apply method (into [(:name job) job] args)))
 
-(defn handle-fail
+(defn fail
   "Calls job fail hook, and then sets failed-at column on job record.
   Deletes record instead if job or env is configured accordingly"
-  [{:keys [logger delete-failed-jobs?] :as env} job]
+  [{:keys [logger delete-failed-jobs?] :as env} {:keys [attempts] :as job}]
   (try
     (invoke-hook j/fail job)
     (catch Exception e
       (logger env job :error 
-              (str "Error when running fail callback:\n"
-                   (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e))))))
+              (str "Error when running fail callback:\n" (exception-str e))))
     (finally
       (let [delete? (or (:delete-if-failed? job)
                         delete-failed-jobs?)
             query-params {:table (:table env)
                           :id (:id job)}]
         (if delete?
-          (db/sql env :delete-record query-params)
-          (db/sql env :update-record (merge query-params
-                                            {:updates {:failed-at (u/to-sql-time-string (t/now))}})))))))
+          (do
+            (db/sql env :delete-record query-params)
+            (logger env job :error (str "REMOVED permanently because of " attempts
+                                        "consecutive failures")))
+          (do
+            (db/sql env :update-record (merge query-params
+                                              {:updates {:failed-at (u/to-sql-time-string (t/now))}}))
+            (logger env job :error (str "MARKED failed because of " attempts
+                                        "consecutive failures"))))))))
 
-(defn attempt-reschedule
+(defn reschedule
   "If there are less attempts made then max-attempts reschedules job.
   Otherwise job will be processed as failed"
   [{:keys [logger reschedule-at table] :as env} {:keys [id attempts] :as job}]
-  (let [max-attempts (or (:max-attempts job) (:max-attempts env))
-        attempts (inc attempts)]
-    (if (< attempts max-attempts)
-      (let [run-at (reschedule-at (now) attempts)]
-        (db/sql env :update-record (db/make-query-params {:table table
-                                                       :updates {:locked-by nil
-                                                                  :locked-at nil
-                                                                  :attempts attempts 
-                                                                  :run-at run-at}
-                                                       :where [:id := id]}))
-        (logger env job :info "Rescheduled at " run-at))
-      (let [job (assoc job :attempts attempts)]
-        (logger env job :error (str "REMOVED permanently because of " attempts
-                                    "consecutive failures"))
-        (handle-fail env job)))))
+  (let [run-at (reschedule-at (now) attempts)]
+    (db/sql env :update-record (db/make-query-params {:table table
+                                                      :updates {:locked-by nil
+                                                                :locked-at nil
+                                                                :attempts attempts 
+                                                                :run-at run-at}
+                                                      :where [:id := id]}))
+    (logger env job :info "Rescheduled at " run-at)))
 
-(defn invoke-job [job]
+(defn invoke-job
+  "Tries to run actual job, by invoking its various job hooks."
+  [job]
   (try
     (invoke-hook j/before job)
     (invoke-hook j/run job)
@@ -120,18 +133,28 @@
     (finally
       (invoke-hook j/after job))))
 
-(defn run [{:keys [logger table] :as env} {:keys [id] :as job}]
+(defn run
+  "Times and runs a job. A failing job should throw an exception. A
+  successful job gets deleted. A failed job is (attempted to be)
+  rescheduled. Returns either :success or :fail"
+  [{:keys [logger table] :as env} {:keys [id attempts] :as job}]
   (logger env job :info "RUNNING")
   (try
-    (invoke-job job)
-    (db/sql env :delete-record {:id id :table table})
-    (logger env job :info "COMPLETED after ")
-    job
+    (let [runtime (u/time-in-ms (invoke-job job))]
+      (db/sql env :delete-record {:id id :table table})
+      (logger env job :info "COMPLETED after " (h/duration runtime))
+      :success)
     (catch Exception e
-      
-      )
-    )
-  )
+      (logger env job :error
+              (str "FAILED to run. " "Failed " attempts " prior attempts. Error this time:\n")
+              (exception-str e))
+      (let [max-attempts (or (:max-attempts job) (:max-attempts env))
+            attempts (inc attempts)
+            job (assoc job :attempts attempts)]
+        (if (< attempts max-attempts)
+          (reschedule env job)
+          (fail env job)))
+      :fail)))
 
 (defn reserve-job
   "Looks for and locks a suitable job in one transaction. Returns that
@@ -152,6 +175,26 @@
             job (first (db/sql env :get-cols-from-table query-params))
             job (merge job (u/parse-ruby-yaml (:handler job)))]
         (merge job (invoke-hook j/config job))))))
+
+(def failed-reserved-count (atom 0))
+
+(defn reserve-and-run-one-job
+  "If a job could be reserved returns the result of the run (:success
+  or :fail), otherwise returns nil. If configured will throw on too
+  many reserve errors."
+  [{:keys [logger throw-on-reserve-fail max-failed-reserve-count] :as env}]
+  (try
+    (if-let [job (reserve-job env)]
+      (run env job))
+    (catch Exception e
+      (logger env :error (str "Error while reserving job: " (.toString e)))
+      (let [fail-count (swap! failed-reserved-count inc)]
+        (if (and throw-on-reserve-fail (> fail-count max-failed-reserve-count))
+          (throw (ex-info "Failed to reserve jobs") {:failed-reserved-count @failed-reserved-count}))))))
+
+(defn work-off [n]
+ (loop [c]) 
+  )
 
 ;; (defn start-poll [env stop-ch]
 ;;   (go-loop []
@@ -290,28 +333,30 @@
   ;; (pprint (retrieve-jobs (merge @config {:now (now)})))
   )
 
-;; (try
-;;   (/ 3 0)
-;;   (catch Exception e
-;;     (default-logger {:worker-id "foo-worker"} {:queue "baz-q" :id 1 :name "bar-job"} :info
-;;                     (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
-;;     (throw e)
-;;     ;; (pprint (.getMessage e))
-;;     ;; (pprint (.getCause e))
-;;     ;; (info (.toString e))
-;;     ;; (info (with-out-str (pprint (.getStackTrace e))))
-;;     ;; (pprint "blue")
-;;     )
-;;   (finally
-;;     (pprint "finally")))
+(try
+  (/ 3 0)
+  (catch Exception e
+    ;; (default-logger {:worker-id "foo-worker"} {:queue "baz-q" :id 1 :name "bar-job"} :info
+    ;;                 (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
+    ;; (throw e)
+    (pprint (.getMessage e))
+    ;; (pprint (.getCause e))
+    (info (.toString e))
+    ;; (info (with-out-str (pprint (.getStackTrace e))))
+    ;; (pprint "blue")
+    )
+  (finally
+    (pprint "finally")))
 
 
 (do
   (let [c (chan)]
     (go
       (Thread/sleep 1000)
-      (>! chan :ok)
+      (throw (ex-info "123" {}))
+      (>! c :ok)
       )
-    )
-  (pprint (<!! chan))
+    
+    (pprint (<!! c)))
   )
+
