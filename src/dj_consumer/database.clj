@@ -6,7 +6,7 @@
    [dj-consumer.database.queries]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.database.info :as db-info]
-   ;; [clj-time.jdbc]
+   [clj-time.jdbc]
 
    ;; String manipulation
    [cuerdas.core :as str]
@@ -25,9 +25,10 @@
 (defn make-query-params
   "Takes all the elements need to build and query and returns a data
   map ready to pass to a hugsql query"
-  [{:keys [table cols where limit order-by]}]
+  [{:keys [table cols where limit order-by updates]}]
   {:table table
    :cols cols
+   :updates updates
    :where-clause (if where (cl/conds->sqlvec table "" nil (cl/conds->sqlvec table "" nil nil where) where))
    :limit-clause (if limit (cl/make-limit-clause limit))
    :order-by-clause (if order-by (cl/order-by->sqlvec table "" nil order-by))})
@@ -112,3 +113,28 @@
       (condp = fun
         :now (first (vals (first result)))
         (u/transform-keys (comp keyword u/underscore->hyphen name) result)))))
+
+;; (def n (sql :now nil))
+;; (pprint n)
+;; (def n2 (t/now))
+;; (pprint n2)
+;; (t/plus n2 (t/seconds 3600))
+;; ;
+;;                                         => #inst "2017-04-06T23:15:07.000000000-00:00"
+;; (def env {:sql-log? true
+;;           :table :delayed-job
+;;           :db-conn (db-conn/make-db-conn {:user "root"
+;;                                           :password ""
+;;                                           :url "//localhost:3306/"
+;;                                           :db-name "chin_minimal"
+;;                                           ;; :db-name "chinchilla_development"
+;;                                           })})
+;; (sql env :now nil)
+;; (sql env :update-record {:table :delayed-job :updates {:failed-at (u/to-sql-time-string (t/now))}})
+;; (do
+;;   (def r (sql env :get-cols-from-table  (make-query-params {:table :delayed-job
+;;                                                             :cols [:id :failed-at :run-at]
+;;                                                             :where [:run-at :< (u/to-sql-time-string (t/now))]})))
+;;   (pprint (map #(select-keys % [:id :failed-at :run-at]) r)))
+
+;; (unlock-job env {:id 2})

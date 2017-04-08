@@ -44,7 +44,7 @@ in the namespace where you want to define the various lifecycle multimethods for
 your job(s):
 
 ```
-(defmethod job/perform :some-job [_ job _ _]
+(defmethod job/run :some-job [_ job _ _]
   (info "Doing job, sleeping 1000 ms")
   (Thread/sleep 1000)
   (info "Woke up!. Done the job " )

@@ -12,7 +12,7 @@
    ))
 
 
-(defmethod job/perform :invitation-expiration-reminder-job [_ job _ c]
+(defmethod job/run :invitation-expiration-reminder-job [_ job _ c]
   (info "Doing job, sleeping 1000 ms")
   (Thread/sleep 1000)
   (info "Woke up!. Done the job " )
@@ -23,8 +23,8 @@
   (info "After some job " )
   )
 
-(defmethod job/perform :user/say-hello [_ job _ _]
-  (info "Performing user job " )
+(defmethod job/run :user/say-hello [_ job _ _]
+  (info "Running user job " )
   )
 
 (defmethod job/after :user/say-hello [_ job]
