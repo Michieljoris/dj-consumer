@@ -63,7 +63,7 @@ All job multimethods are expected to be synchronous. If you need to do async
 work, use core.async, or futures, delays and promises. If an error occurs throw
 an exception, it will reschedule the job (up to max-attempts, defined for worker
 and/or on job). If you don't want to reschedule job throw an ex-info with data
-set to {:fail! true}
+set to {:fail? true}
 
 For lifecycle see dj-consumer.job
 

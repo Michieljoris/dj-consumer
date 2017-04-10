@@ -22,7 +22,7 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
-;; Catch exceptions in threads.. 
+;; Catch exceptions in threads. Otherwise they disappear and we'd never know about them!!
  ;; https://stuartsierra.com/2015/05/27/clojure-uncaught-exceptions
 (Thread/setDefaultUncaughtExceptionHandler
  (reify Thread$UncaughtExceptionHandler
@@ -129,19 +129,18 @@
     (finally
       (invoke-hook j/after job))))
 
-(defn timeout
-    "This blocks till either f has completed or timeout expires,
-  whichever comes first. If timeout occurs first, thread is not
-  actually stopped and will still run its course. However it's
-  possible to deref stop? prop of job in f and end early. Will throw
-  if timeout occers, or if f throws exception Otherwise returns
-  evaluation of f"
-  [f {:keys [max-run-time] :as job}]
+(defn invoke-job-with-timeout
+    "This runs the job's lifecycle methods in a thread and blocks till either job
+  has completed or timeout expires, whichever comes first. If timeout occurs
+  first, job is not actually stopped and will still run its course. However
+  stop? key on job is an atom and will be set to true. Will throw if timeout
+  occurs, or if job throws exception."
+  [{:keys [max-run-time] :as job}]
   (let [timeout-channel (async/timeout max-run-time)
         job-channel (async/thread (try
-                              (f job)
-                              (catch Exception e
-                                e)))]
+                                    (invoke-job job)
+                                    (catch Exception e
+                                      e)))]
       (async/alt!! 
         job-channel ([v _] (if (instance? Exception v)
                              (throw v)
@@ -152,12 +151,12 @@
 
 (defn run
   "Times and runs a job. A failing job should throw an exception. A
-  successful job gets deleted. A failed job is (attempted to be)
+  successful job gets deleted. A failed job is potentially
   rescheduled. Returns either :success or :fail"
   [{:keys [logger table] :as env} {:keys [id attempts] :as job}]
   (logger env job :info "RUNNING")
   (try
-    (let [runtime (u/time-in-ms (timeout invoke-job job))]
+    (let [runtime (u/time-in-ms (invoke-job-with-timeout job))]
       (db/sql env :delete-record {:id id :table table})
       (logger env job :info "COMPLETED after " (humanize/duration runtime))
       :success)
@@ -167,8 +166,9 @@
               (exception-str e))
       (let [max-attempts (or (:max-attempts job) (:max-attempts env))
             attempts (inc attempts)
-            job (assoc job :attempts attempts)]
-        (if (< attempts max-attempts)
+            job (assoc job :attempts attempts)
+            {{:keys [fail?]} :context} (u/parse-ex-info e)]
+        (if (and (not fail?) (< attempts max-attempts))
           (reschedule env job)
           (failed env job)))
       :fail)))
@@ -450,46 +450,6 @@
         ;; (info (.toString e)) 
         ;; (info (.toString (.getCause e))) 
         ;; (info (exception-str e))
-(do
-  (def p (promise))
-  (deliver p (do (pprint "doing promise") (Thread/sleep 1000) (pprint "done") :done))
-  (Thread/sleep 2000)
-  (pprint "deref promise")
-  (pprint @p))
-;;Prints:
-;; "doing promise"
-;; <one second pause>
-;; "done"
-;; <two seconds pause>
-;; "deref promise"
-;; :done
-
-(do
-  (def d (delay (do (pprint "doing delay") (Thread/sleep 1000) (pprint "done") :done)))
-  (Thread/sleep 2000)
-  (pprint "force delay")
-  (pprint (force d)))
-;;Prints:
-;; <two seconds pause>
-;; "force delay"
-;; "doing delay"
-;; <one second pause>
-;; "done"
-;; :done
-
-(do
-  (def f (future (do (pprint "doing future") (Thread/sleep 1000) (pprint "done") :done)))
-  (Thread/sleep 2000)
-  (pprint "deref future")
-  (pprint (deref f)))
-;;Prints:
-;; "doing future"
-;; <one second pause>
-;; "done"
-;; <one second pause>
-;; "deref future"
-;; :done
-
 
 
 

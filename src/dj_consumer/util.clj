@@ -1,5 +1,7 @@
 (ns dj-consumer.util
   (:require
+
+   [clojure.core.async :as async]
    [clojure.walk :as walk]
    [clj-time.core :as time]
    [yaml.core :as yaml]
@@ -222,3 +224,33 @@
 
 ;; (def e (Exception.))
 ;; (instance? Exception e)
+;; (try
+;;   ;; (throw (Exception. "foo"))
+;;   (throw (ex-info "bla" {:foo :bar}))
+;;   (catch Exception e
+;;     (let [{{:keys [foo]} :context} (parse-ex-info e)]
+;;       (pprint foo)
+;;       (pprint (parse-ex-info e)))))
+
+;; (defn invoke []
+;;   (try
+;;     (throw (Exception. "in invoke"))
+;;     (catch Exception e
+;;       (info "in invoke fn:" (.toString e))
+;;       (info "throwing exception again")
+;;       (throw e))
+;;     (finally
+;;       (pprint "finally"))))
+
+;; (invoke)
+
+;; (do
+;;   (def t (async/thread
+;;            (try
+;;              (invoke)
+;;              (catch Exception e
+;;                (info "in async/thread" (.toString e))
+;;                :value-from-tread-exception)
+
+;;              )))
+;;   (pprint (async/<!! t)))
