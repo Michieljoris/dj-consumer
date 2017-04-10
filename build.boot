@@ -58,7 +58,7 @@
    (jar)
    (install)))
 
-(deftask install []
+(deftask install-local []
   (comp
    (pom)
    (jar)

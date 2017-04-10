@@ -2,7 +2,7 @@
   (:require
    [dj-consumer.util :as u]
 
-   [dj-consumer.database.clauses :as cl]
+   [dj-consumer.database.clauses :as db-clauses]
    [dj-consumer.database.queries]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.database.info :as db-info]
@@ -29,21 +29,22 @@
   {:table table
    :cols cols
    :updates updates
-   :where-clause (if where (cl/conds->sqlvec table "" nil (cl/conds->sqlvec table "" nil nil where) where))
-   :limit-clause (if limit (cl/make-limit-clause limit))
-   :order-by-clause (if order-by (cl/order-by->sqlvec table "" nil order-by))})
+   :where-clause (if where (db-clauses/conds->sqlvec table "" nil (db-clauses/conds->sqlvec table "" nil nil where) where))
+   :limit-clause (if limit (db-clauses/make-limit-clause limit))
+   :order-by-clause (if order-by (db-clauses/order-by->sqlvec table "" nil order-by))})
 
 (defn make-reserve-scope
   "Takes an environment and returns a map that defines the scope that
   finds one suitable job."
-  [{:keys [worker-id table queues min-priority max-priority max-run-time cols]}]
+  [{:keys [worker-id table queues min-priority max-priority cols]}]
+  {:pre [(string? worker-id)]}
   (let [nil-queue? (contains? (set queues) nil)
         queues (remove nil? queues)
         run-at-before-marker "run-at-before"
         locked-at-before-marker "locked-at-before"]
     (make-query-params {:table table
                         :cols cols
-                        ;; From delayed_job:
+                        ;; From delayed_job_active_record ruby gem:
                         ;; (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL"
                         :where [:and (into [[:failed-at :is :null]
                                             [:or [[:and [[:run-at :<= run-at-before-marker]
@@ -66,6 +67,7 @@
   that returns a suitable job for now. Adds updates clause that locks
   the record."
   [{:keys [worker-id max-run-time reserve-scope] :as env} now]
+  {:pre [(string? worker-id)]}
   (let [now-minus-max-run-time (t/minus now (t/seconds max-run-time))
         now-minus-max-run-time (u/to-sql-time-string now-minus-max-run-time)
         now (u/to-sql-time-string now)

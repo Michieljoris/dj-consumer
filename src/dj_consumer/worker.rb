@@ -1,13 +1,13 @@
- def max_run_time
-        return unless payload_object.respond_to?(:max_run_time)
-        return unless (run_time = payload_object.max_run_time)
+#  def max_run_time
+#         return unless payload_object.respond_to?(:max_run_time)
+#         return unless (run_time = payload_object.max_run_time)
 
-        if run_time > Delayed::Worker.max_run_time
-          Delayed::Worker.max_run_time
-        else
-          run_time
-        end
-end
+#         if run_time > Delayed::Worker.max_run_time
+#           Delayed::Worker.max_run_time
+#         else
+#           run_time
+#         end
+# end
 
  # When a worker is exiting, make sure we don't have any locked jobs.
  def self.clear_locks!(worker_name)

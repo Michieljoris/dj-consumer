@@ -1,12 +1,19 @@
 (ns dj-consumer.util
   (:require
    [clojure.walk :as walk]
-   [clj-time.core :as t]
-   [clj-time.format :as tf]
+   [clj-time.core :as time]
    [yaml.core :as yaml]
 
    ;; String manipulation
    [cuerdas.core :as str]
+
+   ;; logging
+   [taoensso.timbre :as timbre
+    :refer (log  trace  debug  info  warn  error  fatal  report color-str
+                 logf tracef debugf infof warnf errorf fatalf reportf
+                 spy get-env log-env)]
+   [clojure.pprint :refer (pprint)]
+   [jansi-clj.core :refer :all]
    ))
 
 (defn parse-ex-info [e]
@@ -133,3 +140,85 @@
 
 ;; (time-in-ms (Thread/sleep 1000))
 ;; => 1000.221266
+
+(defn parse-ex-info [e]
+  {:msg (.getMessage e)
+   :context (ex-data e)
+   ;; :stacktrace
+   ;; (.getStackTrace e)
+   })
+
+;;Unused, using channel version, see worker.clj
+(defn timeout-using-future
+  "This blocks till either f has completed or timeout expires,
+  whichever comes first. If timeout occurs first, thread is not
+  actually stopped and will still run its course. However it's
+  possible to check for (Thread/interrupted) in f and end early. Will
+  throw if timeout occers, or if f throws exception "
+  [f ms]
+  (try
+    (let [fut (future (f))
+          future-result (deref fut ms :timeout)]
+      (when (= future-result :timeout)
+        (future-cancel fut)
+        (throw (ex-info (str "Function " (str f) " has timed out.") {:timeout? true}))
+        ;; future-result
+        ))
+    (catch Exception e
+      (let [{:keys [msg context]} (parse-ex-info e)]
+        (cond
+          (:timeout? context) (throw e)
+          (.getCause e) (throw (.getCause e))
+          :else (throw e))))))
+
+;; (do
+;;   (defn time-hogger [job]
+;;     ;; (throw (ex-info "job error" {}))
+;;     (loop [n 1]
+;;       (/ n (+ 1 1.0))
+;;       (if (and (not @(:stop? job)) (< n 100000000))
+;;         (recur (inc n)))
+;;       )
+;;     (if @(:stop? job)
+;;       (info "stopped")
+;;       (info "done"))
+;;     :time-hogger
+;;     ;; (dotimes [n 10000000000]
+;;     ;;   (/ n (+ n 1.0))
+;;     ;;   )
+;;     ;; (info (Thread/interrupted))
+;;     ;; (info (Thread/interrupted))
+;;     ;; (if (Thread/interrupted)
+;;     ;;   (pprint "interrupted!!")
+;;     ;;   (pprint "Hello"))
+;;     )
+;;   (time (time-hogger {:stop? (atom false)})))
+
+;; (do
+;;   (defn throwing-timeout2
+;;     "This blocks till either f has completed or timeout expires,
+;;   whichever comes first. If timeout occurs first, thread is not
+;;   actually stopped and will still run its course. However it's
+;;   possible to deref stop? prop of job in f and end early. Will
+;;   throw if timeout occers, or if f throws exception "
+;;     [f job ms]
+;;     (let [timeout-channel (timeout ms)
+;;           job-channel (thread (try
+;;                                 (f)
+;;                                 (catch Exception e
+;;                                   e)))]
+;;       (alt!!
+;;         job-channel ([v _] (if (instance? Exception v)
+;;                              (throw v)
+;;                              v))
+;;         timeout-channel (do
+;;                           (reset! (:stop? job) true)
+;;                           (throw (ex-info (str "Job "(:name job) " has timed out.") {:timeout? true}))))))
+
+;;   ;; (def job {:name "some-job" :stop? (atom false)})
+;;   ;; (throwing-timeout2 #(time-hogger job) job 2000)
+;;   )
+
+
+;; (def e (Exception.))
+;; (instance? Exception e)

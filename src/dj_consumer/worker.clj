@@ -1,18 +1,13 @@
 (ns dj-consumer.worker
   (:require
-   [clojure.core.async
-             :as a
-             :refer [>! <! >!! <!! go go-loop chan buffer close! thread
-                     put! take!
-                     alts! alts!! timeout]]
+   [clojure.core.async :as async]
    [dj-consumer.database :as db]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.util :as u]
    [dj-consumer.job :as j]
-   [dj-consumer.humanize :as h]
+   [dj-consumer.humanize :as humanize]
 
-   [jdbc.pool.c3p0 :as pool]
-   [clj-time.core :as t]
+   [clj-time.core :as time]
 
    ;; String manipulation
    [cuerdas.core :as str]
@@ -27,7 +22,8 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
-;; https://stuartsierra.com/2015/05/27/clojure-uncaught-exceptions
+;; Catch exceptions in threads.. 
+ ;; https://stuartsierra.com/2015/05/27/clojure-uncaught-exceptions
 (Thread/setDefaultUncaughtExceptionHandler
  (reify Thread$UncaughtExceptionHandler
    (uncaughtException [_ thread ex]
@@ -59,12 +55,12 @@
                :throw-on-reserve-fail false
                ;;Queues to process: nil processes all, [nil] processes nil
                ;;queues, ["foo" nil] processes nil and "foo" queues
-               :queues nil 
-               })
+               :queues nil})
+
 (defn now
   "Using local computer time."
   []
-  (t/now))
+  (time/now))
 
 ;;TODO: make sure to run on exit/stopping/halting of job runner!!!!
 (defn clear-locks
@@ -75,14 +71,14 @@
                                                     :where [:locked-by worker-id]})))
 
 (defn exception-str [e]
-  (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e))))
+  (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
 
 (defn invoke-hook
   "Calls hook on job with job and any extra args"
   [method job & args]
   (apply method (into [(:name job) job] args)))
 
-(defn fail
+(defn failed
   "Calls job fail hook, and then sets failed-at column on job record.
   Deletes record instead if job or env is configured accordingly"
   [{:keys [logger delete-failed-jobs?] :as env} {:keys [attempts] :as job}]
@@ -103,7 +99,7 @@
                                         "consecutive failures")))
           (do
             (db/sql env :update-record (merge query-params
-                                              {:updates {:failed-at (u/to-sql-time-string (t/now))}}))
+                                              {:updates {:failed-at (u/to-sql-time-string (now))}}))
             (logger env job :error (str "MARKED failed because of " attempts
                                         "consecutive failures"))))))))
 
@@ -128,10 +124,31 @@
     (invoke-hook j/run job)
     (invoke-hook j/success job)
     (catch Exception e
-      (invoke-hook j/error job e)
+      (invoke-hook j/error job)
       (throw e))
     (finally
       (invoke-hook j/after job))))
+
+(defn timeout
+    "This blocks till either f has completed or timeout expires,
+  whichever comes first. If timeout occurs first, thread is not
+  actually stopped and will still run its course. However it's
+  possible to deref stop? prop of job in f and end early. Will throw
+  if timeout occers, or if f throws exception Otherwise returns
+  evaluation of f"
+  [f {:keys [max-run-time] :as job}]
+  (let [timeout-channel (async/timeout max-run-time)
+        job-channel (async/thread (try
+                              (f job)
+                              (catch Exception e
+                                e)))]
+      (async/alt!! 
+        job-channel ([v _] (if (instance? Exception v)
+                             (throw v)
+                             v))
+        timeout-channel (do
+                          (reset! (:stop? job) true)
+                          (throw (ex-info (str "Job "(:name job) " has timed out.") {:timeout? true}))))))
 
 (defn run
   "Times and runs a job. A failing job should throw an exception. A
@@ -140,9 +157,9 @@
   [{:keys [logger table] :as env} {:keys [id attempts] :as job}]
   (logger env job :info "RUNNING")
   (try
-    (let [runtime (u/time-in-ms (invoke-job job))]
+    (let [runtime (u/time-in-ms (timeout invoke-job job))]
       (db/sql env :delete-record {:id id :table table})
-      (logger env job :info "COMPLETED after " (h/duration runtime))
+      (logger env job :info "COMPLETED after " (humanize/duration runtime))
       :success)
     (catch Exception e
       (logger env job :error
@@ -153,14 +170,14 @@
             job (assoc job :attempts attempts)]
         (if (< attempts max-attempts)
           (reschedule env job)
-          (fail env job)))
+          (failed env job)))
       :fail)))
 
 (defn reserve-job
   "Looks for and locks a suitable job in one transaction. Returns that
   job if found or otherwise nil. Handler column of job record is
   assumed to be yaml and parsed into a map with a job and data key"
-  [{:keys [table worker-id] :as env}]
+  [{:keys [table worker-id max-run-time] :as env}]
   (let [now (now)
         lock-job-scope (db/make-lock-job-scope env now)
         ;;Lock a job record
@@ -173,8 +190,11 @@
                                                               [:failed-at :is :null]]]})
             ;;Retrieve locked record 
             job (first (db/sql env :get-cols-from-table query-params))
-            job (merge job (u/parse-ruby-yaml (:handler job)))]
-        (merge job (invoke-hook j/config job))))))
+            job (merge job (u/parse-ruby-yaml (:handler job)))
+            job-config (invoke-hook j/config job)]
+        (merge job job-config {:stop? (atom false)
+                               :max-run-time (min max-run-time (or (:max-run-time job-config)
+                                                                   max-run-time))})))))
 
 (def failed-reserved-count (atom 0))
 
@@ -186,15 +206,16 @@
   (try
     (if-let [job (reserve-job env)]
       (run env job))
+    ;;TODO catch exception of misconfigured job and call failed
     (catch Exception e
       (logger env :error (str "Error while reserving job: " (.toString e)))
       (let [fail-count (swap! failed-reserved-count inc)]
         (if (and throw-on-reserve-fail (> fail-count max-failed-reserve-count))
-          (throw (ex-info "Failed to reserve jobs") {:failed-reserved-count @failed-reserved-count}))))))
+          (throw (ex-info "Failed to reserve jobs" {:failed-reserved-count @failed-reserved-count})))))))
 
-(defn work-off [n]
- (loop [c]) 
-  )
+;; (defn work-off [n]
+;;  (loop [c]) 
+;;   )
 
 ;; (defn start-poll [env stop-ch]
 ;;   (go-loop []
@@ -297,66 +318,224 @@
 ;; # or to run in the foreground
 ;; RAILS_ENV=production script/delayed_job run --exit-on-complete
 
-(do
-  (let [worker (make-worker{:worker-id :sample-worker
-                            :sql-log? true
-                            :verbose true
-                            :db-config {:user "root"
-                                        :password ""
-                                        :url "//localhost:3306/"
-                                        :db-name "chin_minimal"
-                                        ;; :db-name "chinchilla_development"
-                                        }
+;; (do
+;;   (let [worker (make-worker{:worker-id :sample-worker
+;;                             :sql-log? true
+;;                             :verbose true
+;;                             :db-config {:user "root"
+;;                                         :password ""
+;;                                         :url "//localhost:3306/"
+;;                                         :db-name "chin_minimal"
+;;                                         ;; :db-name "chinchilla_development"
+;;                                         }
 
-                            })]
-    ;; (worker :start)
-    (start worker))
+;;                             })]
+;;     ;; (worker :start)
+;;     (start worker))
 
-  ;; (pprint (db/sql :select-all-from {:table :delayed-job}))
-  ;; (pprint (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
-  ;;                                       :where-clause
-  ;;                                       (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
-  ;;                                       }))
-  ;; (pprint handler-str)
+;;   ;; (pprint (db/sql :select-all-from {:table :delayed-job}))
+;;   ;; (pprint (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
+;;   ;;                                       :where-clause
+;;   ;;                                       (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
+;;   ;;                                       }))
+;;   ;; (pprint handler-str)
 
-  ;; (def handler-str (-> (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
-  ;;                                                    :where-clause
-  ;;                                                    (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
-  ;;                                                    })
-  ;;                      first
-  ;;                      :handler))
-  ;; (job/run:user/say-hello {:id 1} nil nil)
-  ;; (job/after :user/say-hello {:id 1})
-  ;; (job/run :invitation-expiration-reminder-job nil nil nil)
-  ;; (pprint handler-str)
-  ;; (pprint (parse-ruby-yaml handler-str))
-  ;; (pprint (retrieve-jobs (merge @config {:now (now)})))
-  )
+;;   ;; (def handler-str (-> (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
+;;   ;;                                                    :where-clause
+;;   ;;                                                    (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
+;;   ;;                                                    })
+;;   ;;                      first
+;;   ;;                      :handler))
+;;   ;; (job/run:user/say-hello {:id 1} nil nil)
+;;   ;; (job/after :user/say-hello {:id 1})
+;;   ;; (job/run :invitation-expiration-reminder-job nil nil nil)
+;;   ;; (pprint handler-str)
+;;   ;; (pprint (parse-ruby-yaml handler-str))
+;;   ;; (pprint (retrieve-jobs (merge @config {:now (now)})))
+;;   )
 
-(try
-  (/ 3 0)
-  (catch Exception e
-    ;; (default-logger {:worker-id "foo-worker"} {:queue "baz-q" :id 1 :name "bar-job"} :info
-    ;;                 (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
-    ;; (throw e)
-    (pprint (.getMessage e))
-    ;; (pprint (.getCause e))
-    (info (.toString e))
-    ;; (info (with-out-str (pprint (.getStackTrace e))))
-    ;; (pprint "blue")
-    )
-  (finally
-    (pprint "finally")))
+;; (try
+;;   (/ 3 0)
+;;   (catch Exception e
+;;     ;; (default-logger {:worker-id "foo-worker"} {:queue "baz-q" :id 1 :name "bar-job"} :info
+;;     ;;                 (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
+;;     ;; (throw e)
+;;     (pprint (.getMessage e))
+;;     ;; (pprint (.getCause e))
+;;     (info (.toString e))
+;;     ;; (info (with-out-str (pprint (.getStackTrace e))))
+;;     ;; (pprint "blue")
+;;     )
+;;   (finally
+;;     (pprint "finally")))
 
 
-(do
-  (let [c (chan)]
-    (go
-      (Thread/sleep 1000)
-      (throw (ex-info "123" {}))
-      (>! c :ok)
-      )
+;; (do
+;;   (let [c (chan)]
+;;     (go
+;;       (Thread/sleep 1000)
+;;       (throw (ex-info "123" {}))
+;;       (>! c :ok)
+;;       )
     
-    (pprint (<!! c)))
-  )
+;;     (pprint (<!! c)))
+;;   )
+
+;; (defn my-error []
+
+;;   (Thread/sleep 4000)
+;;   (throw (Exception. "from job"))
+;;   (Thread/sleep 1000)
+;;   (pprint "end")
+;;   )
+;; (def fut (future-call my-error))
+;; (deref fut)
+
+;; (thread (my-error))
+;; (go (my-error))
+
+;; (u/throwing-timeout my-error 2000)
+
+;; (do
+;;   (defn time-hogger []
+;;     (loop [n 1]
+;;       (/ n (+ 1 1.0))
+;;       (if (and (not (Thread/interrupted)) (< n 2000000000))
+;;         (recur (inc n)))
+;;       )
+;;     ;; (dotimes [n 10000000000]
+;;     ;;   (/ n (+ n 1.0))
+;;     ;;   )
+;;     ;; (info (Thread/interrupted))
+;;     ;; (info (Thread/interrupted))
+;;     (if (Thread/interrupted)
+;;       (pprint "interrupted!!")
+;;       (pprint "Hello"))
+;;     )
+;;   (time (time-hogger)))
+
+;; (u/throwing-timeout time-hogger 2000)
+
+
+;; (defn throwing-timeout [env job f]
+;;   (try
+;;     (let [max-run-time 4000]
+;;       (when (= (deref (future-call f) max-run-time :timeout
+;;                       ) :timeout)
+;;         (throw (ex-info (str "Job foo with name " (:name job) " has timed out.") {:timeout? true}))))
+;;     (catch Exception e
+;;       (let [{:keys [msg context]} (parse-ex-info e)]
+;;         (cond
+;;           (:timeout? context) (throw e)
+;;           (.getCause e) (throw (.getCause e))
+;;           :else (throw e)))
+        
+;;       )
+;;     ))
+
+;; (do
+;;   ; http://stackoverflow.com/questions/11520394/why-do-cancelled-clojure-futures-continue-using-cpu/14540878#14540878
+  
+
+;;   ;; (throwing-timeout {} {:name "some-job"} (fn []
+;;   ;;                                   (info "hello")
+;;   ;;                                   (my-error)
+;;   ;;                                   ))
+;;   )
+
+        
+        ;; (info (exception-str e))
+        
+        ;; (info (exception-str (.getCause e))) 
+        ;; (info (.toString e)) 
+        ;; (info (.toString (.getCause e))) 
+        ;; (info (exception-str e))
+(do
+  (def p (promise))
+  (deliver p (do (pprint "doing promise") (Thread/sleep 1000) (pprint "done") :done))
+  (Thread/sleep 2000)
+  (pprint "deref promise")
+  (pprint @p))
+;;Prints:
+;; "doing promise"
+;; <one second pause>
+;; "done"
+;; <two seconds pause>
+;; "deref promise"
+;; :done
+
+(do
+  (def d (delay (do (pprint "doing delay") (Thread/sleep 1000) (pprint "done") :done)))
+  (Thread/sleep 2000)
+  (pprint "force delay")
+  (pprint (force d)))
+;;Prints:
+;; <two seconds pause>
+;; "force delay"
+;; "doing delay"
+;; <one second pause>
+;; "done"
+;; :done
+
+(do
+  (def f (future (do (pprint "doing future") (Thread/sleep 1000) (pprint "done") :done)))
+  (Thread/sleep 2000)
+  (pprint "deref future")
+  (pprint (deref f)))
+;;Prints:
+;; "doing future"
+;; <one second pause>
+;; "done"
+;; <one second pause>
+;; "deref future"
+;; :done
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
