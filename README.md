@@ -53,11 +53,17 @@ your job(s):
   )
 ```
 
-A job comes with a :timed-out? key. This atom becomes true when job times out.
- All lifecycle methods of a job get called regardless, take appropriate action
- in each.If your job is sleeping or parked (waiting for channel input) check the
- atom before continuing. Timed out jobs are rescheduled, so make sure the job is
- idempotent or roll back any changes if needed.
+All hooks are passed the job as second parameter. This job is basically a map of
+the delayed job database record with the yaml handler data parsed. The object's
+data from the yaml handler is set to :payload and the name of the ruby
+delayed job struct or of "object#method" to the :name key. The multimethod
+dispatches on this :name key.
+
+A job also comes with a :timed-out? key. This atom becomes true when job times
+out. All lifecycle methods of a job get called regardless, take appropriate
+action in each.If your job is sleeping or parked (waiting for channel input)
+check the atom before continuing. Timed out jobs are rescheduled, so make sure
+the job is idempotent or roll back any changes if needed.
 
 All job multimethods are expected to be synchronous. If you need to do async
 work, use core.async, or futures, delays and promises. If an error occurs throw
