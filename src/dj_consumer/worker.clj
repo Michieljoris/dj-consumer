@@ -45,7 +45,6 @@
                :reschedule-at (fn [t-in-s attempts] (int (+ t-in-s (Math/pow attempts 4))))
                :listen? false
                :delete-failed-jobs? false
-               :poll-interval 5 ;in seconds
                :logger default-logger
                :sql-log? false
                :table :delayed-job
@@ -53,6 +52,9 @@
                :max-priority 10
                :max-failed-reserve-count 10
                :throw-on-reserve-fail false
+               :exit-on-complete? false
+               :poll-interval 5 ;sleep in seconds between batch jobs
+               :poll-batch-size 100 ;how many jobs to process for every poll 
                ;;Queues to process: nil processes all, [nil] processes nil
                ;;queues, ["foo" nil] processes nil and "foo" queues
                :queues nil})
@@ -62,7 +64,6 @@
   []
   (time/now))
 
-;;TODO: make sure to run on exit/stopping/halting of job runner!!!!
 (defn clear-locks
   "Clears all locks for worker"
   [{:keys [worker-id table] :as env}]
@@ -83,10 +84,10 @@
   Deletes record instead if job or env is configured accordingly"
   [{:keys [logger delete-failed-jobs?] :as env} {:keys [attempts] :as job}]
   (try
-    (invoke-hook j/fail job)
+    (invoke-hook j/failed job)
     (catch Exception e
       (logger env job :error 
-              (str "Error when running fail callback:\n" (exception-str e))))
+              (str "Exception when running fail callback:\n" (exception-str e))))
     (finally
       (let [delete? (or (:delete-if-failed? job)
                         delete-failed-jobs?)
@@ -117,17 +118,15 @@
     (logger env job :info "Rescheduled at " run-at)))
 
 (defn invoke-job
-  "Tries to run actual job, by invoking its various job hooks."
+  "Tries to run actual job"
   [job]
   (try
-    (invoke-hook j/before job)
     (invoke-hook j/run job)
-    (invoke-hook j/success job)
     (catch Exception e
-      (invoke-hook j/error job)
+      (invoke-hook j/exception job)
       (throw e))
     (finally
-      (invoke-hook j/after job))))
+      (invoke-hook j/finally job))))
 
 (defn invoke-job-with-timeout
     "This runs the job's lifecycle methods in a thread and blocks till either job
@@ -142,12 +141,28 @@
                                     (catch Exception e
                                       e)))]
       (async/alt!! 
-        job-channel ([v _] (if (instance? Exception v)
-                             (throw v)
-                             v))
-        timeout-channel (do
-                          (reset! (:stop? job) true)
-                          (throw (ex-info (str "Job "(:name job) " has timed out.") {:timeout? true}))))))
+        job-channel ([v _] (when (instance? Exception v)
+                             (throw v)))
+        timeout-channel (throw (ex-info (str "Job "(:name job) " has timed out.") {:timed-out? true})))))
+
+(defn handle-run-exception
+  "Logs job run exception. Reschedules job if attempts left and no
+  fail is requested from job hooks, otherwise fails job. If job is
+  timed out resets timed-out? atom of job to true "
+  [{:keys [logger] :as env} {:keys [attempts] :as job} e]
+  (logger env job :error
+          (str "FAILED to run. " "Failed " attempts " prior attempts. Last exception:\n")
+          (exception-str e))
+  (let [max-attempts (or (:max-attempts job) (:max-attempts env))
+        attempts (inc attempts)
+        job (assoc job :attempts attempts)
+        {{:keys [failed? timed-out?]} :context} (u/parse-ex-info e)]
+    (if (and (not failed?) (< attempts max-attempts))
+      (reschedule env job)
+      (failed env (assoc job :exception e)))
+    (when timed-out?
+      ;;Communicate to job thread that job is timed out.
+      (reset! (:timed-out? job) true))))
 
 (defn run
   "Times and runs a job. A failing job should throw an exception. A
@@ -156,21 +171,12 @@
   [{:keys [logger table] :as env} {:keys [id attempts] :as job}]
   (logger env job :info "RUNNING")
   (try
-    (let [runtime (u/time-in-ms (invoke-job-with-timeout job))]
+    (let [{:keys [runtime]} (u/runtime (invoke-job-with-timeout job))]
       (db/sql env :delete-record {:id id :table table})
       (logger env job :info "COMPLETED after " (humanize/duration runtime))
       :success)
     (catch Exception e
-      (logger env job :error
-              (str "FAILED to run. " "Failed " attempts " prior attempts. Error this time:\n")
-              (exception-str e))
-      (let [max-attempts (or (:max-attempts job) (:max-attempts env))
-            attempts (inc attempts)
-            job (assoc job :attempts attempts)
-            {{:keys [fail?]} :context} (u/parse-ex-info e)]
-        (if (and (not fail?) (< attempts max-attempts))
-          (reschedule env job)
-          (failed env job)))
+      (handle-run-exception env job e)
       :fail)))
 
 (defn reserve-job
@@ -178,6 +184,7 @@
   job if found or otherwise nil. Handler column of job record is
   assumed to be yaml and parsed into a map with a job and data key"
   [{:keys [table worker-id max-run-time] :as env}]
+ 
   (let [now (now)
         lock-job-scope (db/make-lock-job-scope env now)
         ;;Lock a job record
@@ -190,72 +197,90 @@
                                                               [:failed-at :is :null]]]})
             ;;Retrieve locked record 
             job (first (db/sql env :get-cols-from-table query-params))
-            job (merge job (u/parse-ruby-yaml (:handler job)))
-            job-config (invoke-hook j/config job)]
-        (merge job job-config {:stop? (atom false)
+            job-config (invoke-hook j/config job)
+            job (merge job (try (u/parse-ruby-yaml (:handler job))
+                                (catch Exception e
+                                  (throw (ex-info "Exception thrown parsing job yaml"
+                                                  {:e e
+                                                   :job job
+                                                   :yaml-exception? true})))))]
+        (merge job job-config {:timed-out? (atom false)
                                :max-run-time (min max-run-time (or (:max-run-time job-config)
                                                                    max-run-time))})))))
 
 (def failed-reserved-count (atom 0))
 
 (defn reserve-and-run-one-job
-  "If a job could be reserved returns the result of the run (:success
+  "If a job can be reserved returns the result of the run (:success
   or :fail), otherwise returns nil. If configured will throw on too
   many reserve errors."
   [{:keys [logger throw-on-reserve-fail max-failed-reserve-count] :as env}]
   (try
     (if-let [job (reserve-job env)]
-      (run env job))
-    ;;TODO catch exception of misconfigured job and call failed
+      (run env job)) ;never throws, just returns :success or :fail
     (catch Exception e
-      (logger env :error (str "Error while reserving job: " (.toString e)))
-      (let [fail-count (swap! failed-reserved-count inc)]
-        (if (and throw-on-reserve-fail (> fail-count max-failed-reserve-count))
-          (throw (ex-info "Failed to reserve jobs" {:failed-reserved-count @failed-reserved-count})))))))
+      (let [{:keys [e job yaml-exception?]} (u/parse-ex-info e)]
+        (if yaml-exception?
+          (failed env (assoc job :exception e)) ;fail job immediately, yaml is no good.
+          (do ;Panic! Reserving job went wrong!!!
+            (logger env :error (str "Error while trying to reserve a job: \n" (exception-str e)))
+            (let [fail-count (swap! failed-reserved-count inc)]
+              (if (and throw-on-reserve-fail (> fail-count max-failed-reserve-count))
+                (throw (ex-info "Failed to reserve jobs" {:last-exception e
+                                                          :failed-reserved-count @failed-reserved-count}))))))))))
 
-;; (defn work-off [n]
-;;  (loop [c]) 
-;;   )
+(defn run-job-batch [{:keys [exit-on-complete? poll-batch-size worker-status] :as env}]
+  (loop [result-count {:success 0 :fail 0}
+         counter 0]
+    (if-let [success-or-fail (and (= @worker-status :running)
+                                  (< counter poll-batch-size)
+                                  (reserve-and-run-one-job env))]
+      (recur (update result-count success-or-fail inc)
+             (inc counter))
+      result-count)))
 
-;; (defn start-poll [env stop-ch]
-;;   (go-loop []
-;;     )
-;;   )
+(defn stop-worker [{:keys [worker-status] :as env}]
+  (reset! worker-status :stopped))
 
-;; (defn start-poll
-;;   [env f time-in-ms]
-;;   (let [stop (chan)]
-;;     (go-loop []
-;;       (alt!
-;;         (timeout (:poll-interval env)) (do (<! (thread (f)))
-;;                                  (recur))
-;;         stop :stop))
-;;     stop))
-
-
-(defn start-worker [input-ch stop-ch]
-  (go-loop []
-    (let [[v ch] (alts! [input-ch stop-ch])]
-      (if (identical? ch input-ch)
-        (do
-          (info "Value on input-ch is: " v)
-          (recur))))))
-
-;; (defn start [env stop-ch]
-;;   (go-loop
-;;       ))
+(defn start-worker [{:keys [logger poll-interval exit-on-complete? worker-status] :as env}]
+  (reset! worker-status :running)
+  (async/go-loop []
+    (let [{:keys [runtime]
+           {:keys [success fail]}:result} (u/runtime (run-job-batch env))
+          total-runs (+ success fail)
+          jobs-per-second (int (/ total-runs (/ runtime 1000.0)))]
+      (when (pos? total-runs)
+        (logger env :info (str total-runs " jobs processed at " jobs-per-second
+                               " jobs per second. " fail " failed.")))
+      (when (and (zero? total-runs) exit-on-complete?)
+        (logger env :info "No more jobs available. Exiting")
+        (stop-worker env)))
+    (if (= @worker-status :running) 
+      (do
+        (Thread/sleep poll-interval)
+        (recur))
+      (clear-locks env))))
 
 (defprotocol IWorker
   (start [this])
-  (stop [this]))
+  (stop [this])
+  (status [this]))
 
-(defrecord Worker [env stop-ch]
+(defrecord Worker [env]
   IWorker
   (start [this]
-    (info "Starting worker")
-    (pprint (dissoc (reserve-job env) :handler))
-    )
-  (stop [this]))
+    (info (str (:worker-id env) ": Starting"))
+    (let [{:keys [worker-status]} env]
+      (if (not= @worker-status :running)
+        (start-worker env)
+        (info "Worker was already running"))))
+  (stop [this]
+    (let [{:keys [worker-status]} env]
+      (info (str (:worker-id env) ": Stopping"))
+      (if (= @worker-status :running)
+        (stop-worker env) 
+        (info (str (:worker-id env) ": Worker was already not running")))))
+  (status [this] @(:worker-status env)))
 
 (defn make-worker [env]
   {:pre [(some? (:worker-id env))
@@ -268,55 +293,9 @@
     (when (:verbose env)
       (info "Initializing dj-consumer with:")
       (pprint env))
-    (->Worker (assoc env :reserve-scope (db/make-reserve-scope env)) 
-              (chan))))
-
-;; (def input-ch (chan))
-;; (def stop-ch (chan))
-;; (close! stop-ch)
-;; (close! input-ch)
-
-;; (start-worker input-ch stop-ch)
-;; (>!! input-ch "hello")
-;; (a/put! input-ch "hello")
-;; (a/put!  stop-ch "hello")
-
-
-;; (def job-queue (atom []))
-
-;timeout, async, lock table, all in one sql transaction?,
-;; (defn try-job [{:keys [locked-at locked-by failed-at] :as job-record}]
-;;   (try
-;;     :foo
-;;     (catch Exception e :foo))
-;;   )
-
-;; (defn process-jobs [jobs]
-
-;;   )
-
-
-
-;; AILS_ENV=production script/delayed_job start
-;; RAILS_ENV=production script/delayed_job stop
-
-;; # Runs two workers in separate processes.
-;; RAILS_ENV=production script/delayed_job -n 2 start
-;; RAILS_ENV=production script/delayed_job stop
-
-;; # Set the --queue or --queues option to work from a particular queue.
-;; RAILS_ENV=production script/delayed_job --queue=tracking start
-;; RAILS_ENV=production script/delayed_job --queues=mailers,tasks start
-
-;; # Use the --pool option to specify a worker pool. You can use this option multiple times to start different numbers of workers for different queues.
-;; # The following command will start 1 worker for the tracking queue,
-;; # 2 workers for the mailers and tasks queues, and 2 workers for any jobs:
-;; RAILS_ENV=production script/delayed_job --pool=tracking --pool=mailers,tasks:2 --pool=*:2 start
-
-;; # Runs all available jobs and then exits
-;; RAILS_ENV=production script/delayed_job start --exit-on-complete
-;; # or to run in the foreground
-;; RAILS_ENV=production script/delayed_job run --exit-on-complete
+    (->Worker (assoc env
+                     :reserve-scope (db/make-reserve-scope env)
+                     :worker-status (atom nil)))))
 
 ;; (do
 ;;   (let [worker (make-worker{:worker-id :sample-worker
@@ -451,51 +430,30 @@
         ;; (info (.toString (.getCause e))) 
         ;; (info (exception-str e))
 
+;; (defn start-poll [env stop-ch]
+;;   (go-loop []
+;;     )
+;;   )
+
+;; (defn start-poll
+;;   [env f time-in-ms]
+;;   (let [stop (chan)]
+;;     (go-loop []
+;;       (alt!
+;;         (timeout (:poll-interval env)) (do (<! (thread (f)))
+;;                                  (recur))
+;;         stop :stop))
+;;     stop))
 
 
+;; (defn start-worker [input-ch stop-ch]
+;;   (go-loop []
+;;     (let [[v ch] (alts! [input-ch stop-ch])]
+;;       (if (identical? ch input-ch)
+;;         (do
+;;           (info "Value on input-ch is: " v)
+;;           (recur))))))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+;; (defn start [env stop-ch]
+;;   (go-loop
+;;       ))

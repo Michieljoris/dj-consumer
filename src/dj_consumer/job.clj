@@ -7,46 +7,44 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
-;; The various lifecycle multimethods for a job, dispatched ok name of the job.
-;; Every job has a stop? key. This is an atom that's set to true if job times
-;; out or worker is stopped. All appropriate lifecycle get called, regardless of
-;; the value of stop? Take appropriate action in each.
+;; The various lifecycle multimethods for a job are dispatched by name of the
+;; job. Every job has a :timed-out? key. This is an atom that's set to true if
+;; job times out. The various methods of job get called, regardless of the value
+;; of timed-out?. Take appropriate action in each method.
 (defn dispatch [k job] k)
 
 ;;Called when job is reserved.
 (defmulti config
-  "Return a map with overrides and extra options for the job
-  Extra options are :max-run-time :max-attempts, destroy-failed-job" dispatch)
+  "Return a map with overrides and extra options for the job Extra
+  options are :max-run-time :max-attempts, destroy-failed-job"
+  dispatch)
 
 ;;Start job lifecycle (in order)
-(defmulti before
-  "Called before first attempt at job" dispatch)
-
 (defmulti run
-  "Run job, fails if it throws an exception, otherwise is considered success" dispatch)
+  "Run job, considered failed if it throws an exception, otherwise is
+  considered success" dispatch)
 
-;;Either success or error gets called
-(defmulti success
-  "Called after a job is successful" dispatch)
-(defmulti error
-  "Called if run throws an exception, error is on job under error key" dispatch)
+(defmulti exception
+  "Called if run throws an exception, exception will be on job under
+  exception key. " dispatch)
 
-(defmulti after
-  "Always called, success or error" dispatch)
+(defmulti finally
+  "Always called, exception thrown or not" dispatch)
 ;;End job lifecycle
 
-(defmulti fail
-  "Called after trying to run job max-attempts times and job's still failing" dispatch)
+(defmulti failed
+  "Called after trying to run job max-attempts times and job's still
+  throwing an exception from either run, exception or finally hooks,
+  or timing out. This hook is called immediately if the exception
+  thrown is an ex-info with context set to {:failed? true}" dispatch)
 
 (defmethod config :default [_ job])
-(defmethod before :default [_ job])
 (defmethod run :default [k job] (timbre/error "Implementation is missing for job " k))
-(defmethod success :default [_ job])
-(defmethod error :default [_ job])
-(defmethod after :default [_ job])
-(defmethod fail :default [_ job])
+(defmethod exception :default [_ job])
+(defmethod finally :default [_ job])
+(defmethod failed :default [_ job])
 
-;; (doseq [mm ['config 'before 'after 'success 'fail 'error 'run]] (ns-unmap *ns* mm))
+;; (doseq [mm ['config 'after 'fail 'error 'run]] (ns-unmap *ns* mm))
 ;; (defn invoke-hook [method job & args]
 ;;   (apply method (into [(:name job) job] args)))
 

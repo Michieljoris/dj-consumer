@@ -10,9 +10,9 @@
 # end
 
  # When a worker is exiting, make sure we don't have any locked jobs.
- def self.clear_locks!(worker_name)
-          where(locked_by: worker_name).update_all(locked_by: nil, locked_at: nil)
-end
+#  def self.clear_locks!(worker_name)
+#           where(locked_by: worker_name).update_all(locked_by: nil, locked_at: nil)
+# end
 
 # Unlock this job (note: not saved to DB)
 # def job.unlock
@@ -112,47 +112,47 @@ end
 
 # Do num jobs and return stats on success/failure.
 # Exit early if interrupted.
-def work_off(num = 100)
-  success = 0
-  failure = 0
+# def work_off(num = 100)
+#   success = 0
+#   failure = 0
 
-  num.times do
-    case reserve_and_run_one_job
-    when true
-      success += 1
-    when false
-      failure += 1
-    else
-      break # leave if no work could be done
-    end
-    break if stop? # leave if we're exiting
-  end
+#   num.times do
+#     case reserve_and_run_one_job
+#     when true
+#       success += 1
+#     when false
+#       failure += 1
+#     else
+#       break # leave if no work could be done
+#     end
+#     break if stop? # leave if we're exiting
+#   end
 
-  [success, failure]
-end
+#   [success, failure]
+# end
 
 
-def start
-    loop do
-      self.class.lifecycle.run_callbacks(:loop, self) do
-        @realtime = Benchmark.realtime do
-          @result = work_off
-        end
-      end
+# def start
+#     loop do
+#       self.class.lifecycle.run_callbacks(:loop, self) do
+#         @realtime = Benchmark.realtime do
+#           @result = work_off
+#         end
+#       end
 
-      count = @result[0] + @result[1]
+#       count = @result[0] + @result[1]
 
-      if count.zero?
-        if self.class.exit_on_complete
-          say 'No more jobs available. Exiting'
-          break
-        elsif !stop?
-          sleep(self.class.sleep_delay)
-        end
-      else
-        say format("#{count} jobs processed at %.4f j/s, %d failed", count / @realtime, @result.last)
-      end
+#       if count.zero?
+#         if self.class.exit_on_complete
+#           say 'No more jobs available. Exiting'
+#           break
+#         elsif !stop?
+#           sleep(self.class.sleep_delay)
+#         end
+#       else
+#         say format("#{count} jobs processed at %.4f j/s, %d failed", count / @realtime, @result.last)
+#       end
 
-      break if stop?
-    end
-end
+#       break if stop?
+#     end
+# end

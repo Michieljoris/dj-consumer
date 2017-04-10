@@ -47,23 +47,23 @@ your job(s):
 (defmethod job/run :some-job [_ job]
   (info "Doing job, sleeping 1000 ms")
   (Thread/sleep 1000)
-  (if @(:stop? job)
+  (if @(:timed-out? job)
      (pprint "Stopping job!!!!)
      (info  "Done the job " ))
   )
 ```
 
-A job comes with a stop? key. This atom is true if job times out or worker is
-stopped. All lifecycle methods of a job get called regardless, take appropriate
-action in each.If your job is sleeping or parked (waiting for channel input)
-check the atom before continuing. Timed out jobs are rescheduled, so make sure
-the job is idempotent or roll back any changes if needed.
+A job comes with a :timed-out? key. This atom becomes true when job times out.
+ All lifecycle methods of a job get called regardless, take appropriate action
+ in each.If your job is sleeping or parked (waiting for channel input) check the
+ atom before continuing. Timed out jobs are rescheduled, so make sure the job is
+ idempotent or roll back any changes if needed.
 
 All job multimethods are expected to be synchronous. If you need to do async
 work, use core.async, or futures, delays and promises. If an error occurs throw
 an exception, it will reschedule the job (up to max-attempts, defined for worker
-and/or on job). If you don't want to reschedule job throw an ex-info with data
-set to {:fail? true}
+and/or on job). If you don't want to reschedule job throw an ex-info with context
+set to {:failed? true}
 
 For lifecycle see dj-consumer.job
 

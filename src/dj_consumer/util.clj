@@ -4,6 +4,7 @@
    [clojure.core.async :as async]
    [clojure.walk :as walk]
    [clj-time.core :as time]
+   [clj-time.format :as time-format]
    [yaml.core :as yaml]
 
    ;; String manipulation
@@ -17,7 +18,6 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]
    ))
-
 (defn parse-ex-info [e]
   {:msg (.getMessage e)
    :context (ex-data e)
@@ -64,7 +64,6 @@
     (and (number? s) (>= s 0))  s
     :else nil))
 
-
 (defn split-on-hyphen
   "Splits a string on hyphens."
   [s]
@@ -107,10 +106,10 @@
            lower-hyphen (if ns (str ns "/" lower-hyphen) lower-hyphen)]
        (keyword lower-hyphen)))))
 
-(def sql-formatter (tf/formatter "yyyy-MM-dd HH:mm:ss"))
+(def sql-formatter (time-format/formatter "yyyy-MM-dd HH:mm:ss"))
 
 (defn to-sql-time-string [t]
-  (tf/unparse sql-formatter t))
+  (time-format/unparse sql-formatter t))
 
 (defn remove-!ruby-annotations [s]
   (str/replace s #"!ruby/[^\s]*" ""))
@@ -133,15 +132,17 @@
                :unknown-job-name)
      :payload data}))
 
-(defmacro time-in-ms
-  "Evaluates expr and returns the time it took in ms"
+(defmacro runtime
+  "Evaluates expr and returns a map with the time it took in ms
+  under :runtime and the result of the expression under :result "
   [expr]
   `(let [start# (. System (nanoTime))
          ret# ~expr]
-     (/ (double (- (. System (nanoTime)) start#)) 1000000.0)))
+     {:runtime (/ (double (- (. System (nanoTime)) start#)) 1000000.0)
+      :result ret#}))
 
-;; (time-in-ms (Thread/sleep 1000))
-;; => 1000.221266
+;; (runtime (do (Thread/sleep 1000) :foo))
+;; => {:result :foo, :runtime 1000.432838}
 
 (defn parse-ex-info [e]
   {:msg (.getMessage e)
@@ -232,17 +233,21 @@
 ;;       (pprint foo)
 ;;       (pprint (parse-ex-info e)))))
 
-;; (defn invoke []
-;;   (try
-;;     (throw (Exception. "in invoke"))
-;;     (catch Exception e
-;;       (info "in invoke fn:" (.toString e))
-;;       (info "throwing exception again")
-;;       (throw e))
-;;     (finally
-;;       (pprint "finally"))))
+;; (do
+;;   (defn invoke []
+;;     (try
+;;       (pprint "foobar")
+;;       (throw (Exception. "in invoke"))
+;;       (catch Exception e
+;;         (info "in invoke fn:" (.toString e))
+;;         (info "throwing exception again")
+;;         (throw e))
+;;       (finally
+;;         (pprint "finally")
+;;         ;; (throw (Exception. "finally exception"))
+;;         )))
 
-;; (invoke)
+;;   (invoke))
 
 ;; (do
 ;;   (def t (async/thread
