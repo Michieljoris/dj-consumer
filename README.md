@@ -84,3 +84,10 @@ Besides being able to start a repl in this repo, if you start your (boot) projec
 
 any edits in dj-consumer source will compiled, installed and checked out again
 in your project.
+
+### TODO
+
+- Passing in delayed job table name is assumed to be singular and keyword. Maybe
+  pass in real table name.
+- This lib uses some util fns and the db clauses namespace from bilby. Extract
+  this stuff into libs and reuse. Whole of bilby should be collection of libs really.

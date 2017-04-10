@@ -19,7 +19,7 @@
   ;; (put! c :done)
   )
 
-(defmethod job/after :invitation-expiration-reminder-job [_ job _ _]
+(defmethod job/finally :invitation-expiration-reminder-job [_ job _ _]
   (info "After some job " )
   )
 
@@ -27,6 +27,6 @@
   (info "Running user job " )
   )
 
-(defmethod job/after :user/say-hello [_ job]
+(defmethod job/finally :user/say-hello [_ job]
   (info "After user  job " )
   )

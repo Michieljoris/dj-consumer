@@ -1,5 +1,5 @@
-(ns dj-consumer.database-test
-  (:require [dj-consumer.database :as tn]
+(ns dj-consumer.database.core-test
+  (:require [dj-consumer.database.core :as tn]
             [clj-time.core :as time]
             [clojure.test :as t :refer [deftest is]]))
 
@@ -137,43 +137,3 @@
         ["order by some_job_tables.priority asc, some_job_tables.run_at asc"]})
       "run_at and locked_by are set to now and now minus max-run-time"
       ))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

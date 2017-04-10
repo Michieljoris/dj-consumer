@@ -1,4 +1,4 @@
-(ns dj-consumer.database
+(ns dj-consumer.database.core
   (:require
    [dj-consumer.util :as u]
 

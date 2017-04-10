@@ -1,7 +1,7 @@
 (ns dj-consumer.worker
   (:require
    [clojure.core.async :as async]
-   [dj-consumer.database :as db]
+   [dj-consumer.database.core :as db]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.util :as u]
    [dj-consumer.job :as j]
@@ -11,8 +11,6 @@
 
    ;; String manipulation
    [cuerdas.core :as str]
-
-   [dj-consumer.sample-job]
 
    ;; logging
    [taoensso.timbre :as timbre
@@ -302,7 +300,7 @@
   "Creates a worker that processes delayed jobs found in the db. Each
   worker is independant from other workers and can be run in
   parallel."
-  [{:keys [worker-id verbose? db-conn db-config]}]
+  [{:keys [worker-id verbose? db-conn db-config] :as env}]
   {:pre [(some? worker-id)
          (some? (or db-conn db-config))]}
   (let [{:keys [db-conn db-config poll-interval worker-id] :as env} (merge defaults env)
