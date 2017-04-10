@@ -44,6 +44,7 @@
                :max-run-time (* 3600 4) ;4 hours
                :reschedule-at (fn [t-in-s attempts] (int (+ t-in-s (Math/pow attempts 4))))
                :listen? false
+               :verbose? false
                :delete-failed-jobs? false
                :logger default-logger
                :sql-log? false
@@ -51,7 +52,7 @@
                :min-priority 0
                :max-priority 10
                :max-failed-reserve-count 10
-               :throw-on-reserve-fail false
+               :stop-on-reserve-fail false
                :exit-on-complete? false
                :poll-interval 5 ;sleep in seconds between batch jobs
                :poll-batch-size 100 ;how many jobs to process for every poll 
@@ -207,14 +208,13 @@
         (merge job job-config {:timed-out? (atom false)
                                :max-run-time (min max-run-time (or (:max-run-time job-config)
                                                                    max-run-time))})))))
-
-(def failed-reserved-count (atom 0))
+(declare stop-worker)
 
 (defn reserve-and-run-one-job
   "If a job can be reserved returns the result of the run (:success
   or :fail), otherwise returns nil. If configured will throw on too
   many reserve errors."
-  [{:keys [logger throw-on-reserve-fail max-failed-reserve-count] :as env}]
+  [{:keys [logger stop-on-reserve-fail max-failed-reserve-count failed-reserved-count] :as env}]
   (try
     (if-let [job (reserve-job env)]
       (run env job)) ;never throws, just returns :success or :fail
@@ -225,11 +225,18 @@
           (do ;Panic! Reserving job went wrong!!!
             (logger env :error (str "Error while trying to reserve a job: \n" (exception-str e)))
             (let [fail-count (swap! failed-reserved-count inc)]
-              (if (and throw-on-reserve-fail (> fail-count max-failed-reserve-count))
-                (throw (ex-info "Failed to reserve jobs" {:last-exception e
-                                                          :failed-reserved-count @failed-reserved-count}))))))))))
+              (when (and stop-on-reserve-fail (> fail-count max-failed-reserve-count))
+                (stop-worker env)
+                ;; (throw (ex-info "Failed to reserve jobs" {:last-exception e
+                ;;                                           :failed-reserved-count @failed-reserved-count}))
+                ))))))))
 
-(defn run-job-batch [{:keys [exit-on-complete? poll-batch-size worker-status] :as env}]
+(defn run-job-batch
+  "Run a number of jobs in one batch, consecutively. Return map of
+  success and fail count. We're running in a thread, so we check
+  worker status and stop processing the batch if worker status in
+  not :running"
+  [{:keys [exit-on-complete? poll-batch-size worker-status] :as env}]
   (loop [result-count {:success 0 :fail 0}
          counter 0]
     (if-let [success-or-fail (and (= @worker-status :running)
@@ -239,10 +246,19 @@
              (inc counter))
       result-count)))
 
-(defn stop-worker [{:keys [worker-status] :as env}]
+(defn stop-worker
+  "Set worker status to :stopped"
+  [{:keys [worker-status] :as env}]
   (reset! worker-status :stopped))
 
-(defn start-worker [{:keys [logger poll-interval exit-on-complete? worker-status] :as env}]
+(defn start-worker
+  "Start a async thread and loop till worker status changes to not
+  running. In the loop first run a batch of jobs. Log the result if
+  any jobs were done. If none were done, set worker status to :stopped
+  if exit-on-complete? flag is set. Then, as long as worker status
+  is :running sleep for poll-interval seconds and then recur loop.
+  Otherwise clear locks and exit async thread"
+  [{:keys [logger poll-interval exit-on-complete? worker-status] :as env}]
   (reset! worker-status :running)
   (async/go-loop []
     (let [{:keys [runtime]
@@ -282,19 +298,24 @@
         (info (str (:worker-id env) ": Worker was already not running")))))
   (status [this] @(:worker-status env)))
 
-(defn make-worker [env]
-  {:pre [(some? (:worker-id env))
-         (some? (or (:db-conn env) (:db-config env)))]}
+(defn make-worker
+  "Creates a worker that processes delayed jobs found in the db. Each
+  worker is independant from other workers and can be run in
+  parallel."
+  [{:keys [worker-id verbose? db-conn db-config]}]
+  {:pre [(some? worker-id)
+         (some? (or db-conn db-config))]}
   (let [{:keys [db-conn db-config poll-interval worker-id] :as env} (merge defaults env)
         env (assoc env
                    :worker-id (str/strip-prefix (str worker-id) ":")
                    :poll-interval (* 1000 poll-interval)
                    :db-conn (or db-conn (db-conn/make-db-conn db-config)))]
-    (when (:verbose env)
+    (when (:verbose? env)
       (info "Initializing dj-consumer with:")
       (pprint env))
     (->Worker (assoc env
                      :reserve-scope (db/make-reserve-scope env)
+                     :failed-reserved-count (atom 0)
                      :worker-status (atom nil)))))
 
 ;; (do
