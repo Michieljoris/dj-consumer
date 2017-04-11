@@ -67,3 +67,18 @@ limit :count
 
 -- :name now
 select now();
+
+--- *************** Testing
+-- :name drop-db :!
+drop database if exists :i:db-name;
+
+-- :name create-db :!
+create database if not exists :i:db-name;
+
+-- :name create-table :!
+CREATE TABLE :i:table-name (:i*:columns)
+
+-- :name insert-rows :! :n
+-- :doc Insert multiple rows with :tuple* parameter type
+insert into :i:table-name (:i*:cols)
+values :tuple*:rows

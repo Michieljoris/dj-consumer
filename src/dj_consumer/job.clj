@@ -44,6 +44,12 @@
 (defmethod finally :default [_ job])
 (defmethod failed :default [_ job])
 
+(defn invoke-hook
+  "Calls hook on job with job and any extra args"
+  [method job & args]
+  (apply method (into [(:name job) job] args)))
+
+
 ;; (doseq [mm ['config 'after 'fail 'error 'run]] (ns-unmap *ns* mm))
 ;; (defn invoke-hook [method job & args]
 ;;   (apply method (into [(:name job) job] args)))

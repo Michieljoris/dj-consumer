@@ -38,7 +38,7 @@ See for more options dj-consumer.worker.
 
 Define a job by requiring
 
-    [dj-consumer.job]
+    [dj-consumer.job :as job]
 
 in the namespace where you want to define the various lifecycle multimethods for
 your job(s):
@@ -91,3 +91,4 @@ in your project.
   pass in real table name.
 - This lib uses some util fns and the db clauses namespace from bilby. Extract
   this stuff into libs and reuse. Whole of bilby should be collection of libs really.
+- catch INT?

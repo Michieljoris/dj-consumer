@@ -1,12 +1,11 @@
 (ns dj-consumer.database.clauses
   (:require
    [dj-consumer.database.queries :refer [clause-snip cond-snip where-snip limit-snip]]
-   [dj-consumer.database.info :refer [table-name]]
 
    ;; String manipulation
    [cuerdas.core :as str]
 
-   [dj-consumer.util :refer [hyphen->underscore parse-natural-number includes?]]
+   [dj-consumer.util :as u :refer [hyphen->underscore parse-natural-number includes?]]
 
    ;; logging
    [taoensso.timbre :as timbre
@@ -60,7 +59,7 @@
       (let [prop-keyword (keyword (name p))]
         (get props prop-keyword)))))
 
-(defn cond->cond-snip-params [t alias-prefix props cols [p1 op p2]]
+(defn cond->cond-snip-params [env t alias-prefix props cols [p1 op p2]]
   (if-not (includes? operators op)
     (throw (ex-info  (str op " is not an operator") {})))
   (let [p1 (or (lookup-prop props p1) p1)
@@ -82,7 +81,7 @@
       (throw (ex-info
               (str "comparison is not correct for " p1 " and " p2)
               {:cond [p1 op p2]})))
-    (let [prefix-table-name (fn [p] (str alias-prefix (if (str/contains? p ".") p (str (table-name t) "." p))))
+    (let [prefix-table-name (fn [p] (str alias-prefix (if (str/contains? p ".") p (str (u/table-name env t) "." p))))
           p1 (if (= p1-type :i) ((comp prefix-table-name hyphen->underscore name) p1) p1)
           p2 (if (= p2-type :i) ((comp prefix-table-name hyphen->underscore name) p2) p2)
           p2 (if (= p2-type :n) "NULL" p2)
@@ -101,7 +100,7 @@
   1] [:and [[:b :in [1 2]] [:c :< 3]]]]] and returns a sqlvec to be
   passed to a hugsql db query as the where param. Pass nil for cols to
   return vector of column keys uses in conds."
-  [t alias-prefix props cols conds]
+  [env t alias-prefix props cols conds]
    (let [found-cols (atom [])]
      (letfn [(make-sqlvec [prefix conds]
                (if (clause? conds)
@@ -122,7 +121,7 @@
                            params {:cond conds}
                            params (if prefix (assoc params :prefix prefix) params)]
                        (clause-snip params)))) ;make clause snip
-                 (let [params (cond->cond-snip-params t alias-prefix props cols conds)
+                 (let [params (cond->cond-snip-params env t alias-prefix props cols conds)
                        params (if prefix (assoc params :prefix prefix) params)]
                    (swap! found-cols concat (:found-cols params))
                    (cond-snip params))))] ;make cond snip
@@ -138,7 +137,7 @@
 (defn order-by->sqlvec
   "Takes a list of valid columns and returns a order-by sqlvec to be
   passed to a hugsql query as the order-by param"
-  [t alias-prefix cols order-by]
+  [env t alias-prefix cols order-by]
   [(str "order by "
         (str/join ", " (map (fn [[col dir]]
                               (if (nil? col) (throw (ex-info "Can't order by nil column :-)" {:table t
@@ -149,23 +148,22 @@
                                 (throw (ex-info (str dir " is not a valid order direction") {:table t
                                                                                              :cols cols
                                                                                              :order-by order-by})))
-                              (str alias-prefix (table-name t)  "."
+                              (str alias-prefix (u/table-name env t)  "."
                                    (hyphen->underscore (name col))
                                    (if dir (str " " (name dir)))))
                             order-by)))])
 
-(defn make-where-clause [t alias-prefix scope cond {:keys [where]} props cols]
+;; (order-by->sqlvec {} :job-table "" [:c1] [[:c1]])
+
+(defn make-where-clause [env t alias-prefix scope cond {:keys [where]} props cols]
   (if (or scope cond where)
     (let [conds (filterv some? [scope cond where])]
       ;If there's only one cond in the and, the and will be removed by conds->sqlvec
-      (conds->sqlvec t alias-prefix props cols [:and conds]))))
+      (conds->sqlvec env t alias-prefix props cols [:and conds]))))
 
-(defn make-order-by-clause [t alias-prefix {:keys [order-by]} cols]
+(defn make-order-by-clause [env t alias-prefix {:keys [order-by]} cols]
   (if (and order-by (pos? (count order-by)))
-    (order-by->sqlvec t alias-prefix cols order-by)))
+    (order-by->sqlvec env t alias-prefix cols order-by)))
 
-(defn positive-number-or-nil? [n]
-  (or (nil? n) (parse-natural-number n)))
-
-(defn make-limit-clause [{:keys [count]}]
+(defn make-limit-clause [env {:keys [count]}]
   (limit-snip {:count count}))

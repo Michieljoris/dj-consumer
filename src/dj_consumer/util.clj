@@ -174,6 +174,20 @@
           (.getCause e) (throw (.getCause e))
           :else (throw e))))))
 
+(defn table-name
+  "Table names are singular hyphenated and keywords. This fn returns
+  the actual table name by looking it up in db-config.schema in env or
+  otherwise just adds an 's'. If table is already a string it is
+  returned as is.Returns a string or nil."
+  [{:keys [db-config] :as env} table]
+  (cond
+    (keyword? table) (-> (or (get-in db-config [:schema table :table-name])
+                             (if (:pluralize-table-names? db-config)
+                               (str (name table) "s")
+                               table))
+                         name
+                         hyphen->underscore)
+    (string? table) table))
 ;; (do
 ;;   (defn time-hogger [job]
 ;;     ;; (throw (ex-info "job error" {}))
