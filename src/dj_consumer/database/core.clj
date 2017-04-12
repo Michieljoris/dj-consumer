@@ -100,6 +100,10 @@
                         :updates
                         (u/transform-keys (comp keyword u/hyphen->underscore name) (:updates params))
                         )
+                 :delete-record
+                 (assoc params
+                        :table (u/table-name env (:table params))
+                        )
                  (throw (ex-info"Unknown sql function" {:fun fun})))
         fun (or (:fun params) fun)      ;if we decided to use a alternative fun, use that
         fun-str (str "dj-consumer.database.queries/" (name fun))

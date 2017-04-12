@@ -5,6 +5,8 @@
    [clojure.walk :as walk]
    [clj-time.core :as time]
    [clj-time.format :as time-format]
+   [clj-time.coerce :as time-coerce]
+
    [yaml.core :as yaml]
 
    ;; String manipulation
@@ -110,6 +112,8 @@
 
 (defn to-sql-time-string [t]
   (time-format/unparse sql-formatter t))
+;; (to-sql-time-string (time/now))
+;; (time/now)
 
 (defn remove-!ruby-annotations [s]
   (str/replace s #"!ruby/[^\s]*" ""))
@@ -188,6 +192,27 @@
                          name
                          hyphen->underscore)
     (string? table) table))
+
+(defn get-local-tz-offset []
+  (let [now-in-ms (time-coerce/to-long (time/now))
+        offset (/ (.getOffset (time/default-time-zone) now-in-ms) 1000)
+        hours (int (/ offset 3600))
+        minutes (int (/ (rem offset 3600) 60))]
+    {:hours hours :minutes minutes}))
+
+(defn now
+    "Return now in utc, with explicit local timezone offset added, and
+  milliseconds set to 0, so for instance you would get
+  2017-04-12T11:15:21.000+02:00 in Amsterdam at 13:15:21 local time"
+    []
+  (let [{:keys [hours minutes]} (get-local-tz-offset)
+        now (time/from-time-zone (time/now) (time/time-zone-for-offset hours minutes))]
+    (time/minus now (time/millis (time/milli now)))))
+
+(defn exception-str [e]
+  (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
+
+
 ;; (do
 ;;   (defn time-hogger [job]
 ;;     ;; (throw (ex-info "job error" {}))
