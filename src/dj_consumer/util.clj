@@ -5,6 +5,7 @@
    [clojure.walk :as walk]
    [clj-time.core :as time]
    [clj-time.format :as time-format]
+   [clj-time.local :as time-local]
    [clj-time.coerce :as time-coerce]
 
    [yaml.core :as yaml]
@@ -112,8 +113,6 @@
 
 (defn to-sql-time-string [t]
   (time-format/unparse sql-formatter t))
-;; (to-sql-time-string (time/now))
-;; (time/now)
 
 (defn remove-!ruby-annotations [s]
   (str/replace s #"!ruby/[^\s]*" ""))
@@ -200,14 +199,39 @@
         minutes (int (/ (rem offset 3600) 60))]
     {:hours hours :minutes minutes}))
 
+(defn sql-time
+    "Return some-time in utc, with explicit local timezone offset added,
+, so for instance you would get 2017-04-12T11:15:21.000+02:00 in
+  Amsterdam at 13:15:21.000 local time"
+    [some-time]
+  (time/from-time-zone some-time (time/default-time-zone)))
+
+;; (sql-time (time/now))
+;; => #object[org.joda.time.DateTime 0x25d6584b "2017-04-12T14:54:16.000+02:00"]
+
 (defn now
-    "Return now in utc, with explicit local timezone offset added, and
-  milliseconds set to 0, so for instance you would get
-  2017-04-12T11:15:21.000+02:00 in Amsterdam at 13:15:21 local time"
+    "Return now with milliseconds set to 0"
     []
-  (let [{:keys [hours minutes]} (get-local-tz-offset)
-        now (time/from-time-zone (time/now) (time/time-zone-for-offset hours minutes))]
+  (let [now (time/now)]
     (time/minus now (time/millis (time/milli now)))))
+
+(def custom-formatter
+  ;; (time-format/formatter "yyyy-MM-dd HH-mm-ss Z")
+  (time-format/formatters :rfc822)
+  )
+
+(do
+  (defn time->str [some-time]
+    (time-format/unparse custom-formatter some-time))
+  (time->str (now)))
+
+;; (now)
+;; (time/now)
+;; (time-local/to-local-date-time (time/now))
+;; (now)
+;; (time/to-time-zone (time/now) (time/default-time-zone))
+
+;; (time-format/show-formatters)
 
 (defn exception-str [e]
   (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))

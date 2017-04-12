@@ -8,7 +8,7 @@
    [dj-consumer.humanize :as humanize]
 
    [clj-time.core :as time]
-   [clj-time.local :as time-local]
+   [clj-time.format :as time-format]
    [clj-time.coerce :as time-coerce]
 
    ;; String manipulation
@@ -42,7 +42,8 @@
 
 (def defaults {:max-attempts 25
                :max-run-time (* 3600 4) ;4 hours
-               :reschedule-at (fn [t-in-s attempts] (int (+ t-in-s (Math/pow attempts 4))))
+               :reschedule-at (fn [some-time attempts]
+                                (time/plus some-time (time/seconds (Math/pow attempts 4))))
                :listen? false
                :verbose? false
                :delete-failed-jobs? false
@@ -71,34 +72,32 @@
 (defn failed
   "Calls job fail hook, and then sets failed-at column on job record.
   Deletes record instead if job or env is configured accordingly"
-  [{:keys [table logger delete-failed-jobs?] :as env} {:keys [id attempts] :as job}]
+  [{:keys [table logger delete-failed-jobs?] :as env} {:keys [id delete-if-failed? fail-reason] :as job}]
   (try
     (job/invoke-hook job/failed job)
     (catch Exception e
       (logger env job :error 
               (str "Exception when running fail callback:\n" (u/exception-str e))))
     (finally
-      (info "finally")
-      (let [delete? (or (:delete-if-failed? job)
-                        delete-failed-jobs?)
+      (let [delete? (if (contains? job :delete-if-failed?)
+                      delete-if-failed?
+                      delete-failed-jobs?)
             query-params (db/make-query-params env {:table table
                                                     :where [:id := id]})]
         (if delete?
           (do
             (db/sql env :delete-record {:table table :id id})
-            (logger env job :error (str "REMOVED permanently because of " attempts
-                                        "consecutive failures")))
+            (logger env job :error (str "REMOVED permanently because of " fail-reason)))
           (do
             (db/sql env :update-record (db/make-query-params env
                                                              {:table table
                                                               :where [:id := id]
-                                                              :updates {:failed-at (u/now)}}))
-            (logger env job :error (str "MARKED failed because of " attempts
-                                        "consecutive failures"))))))))
+                                                              :updates {:failed-at (u/sql-time (u/now))}}))
+            (logger env job :error (str "MARKED failed because of " fail-reason))))))))
 
 (defn reschedule
-  "If there are less attempts made then max-attempts reschedules job.
-  Otherwise job will be processed as failed"
+  "Calculates new run-at using reschedule-at from env, unlocks and updates
+  attempts and run-at of record"
   [{:keys [logger reschedule-at table] :as env} {:keys [id attempts] :as job}]
   (let [run-at (reschedule-at (u/now) attempts)]
     (db/sql env :update-record (db/make-query-params env
@@ -106,9 +105,9 @@
                                                       :updates {:locked-by nil
                                                                 :locked-at nil
                                                                 :attempts attempts 
-                                                                :run-at run-at}
+                                                                :run-at (u/sql-time run-at)}
                                                       :where [:id := id]}))
-    (logger env job :info "Rescheduled at " run-at)))
+    (logger env job :info (str "Rescheduled at " (u/time->str run-at)))))
 
 (defn invoke-job
   "Tries to run actual job"
@@ -152,7 +151,12 @@
         {{:keys [failed? timed-out?]} :context} (u/parse-ex-info e)]
     (if (and (not failed?) (< attempts max-attempts))
       (reschedule env job)
-      (failed env (assoc job :exception e)))
+      (failed env (assoc job
+                         :exception e
+                         :fail-reason (if failed?
+                                           "job requested to be failed"
+                                           (str attempts " consecutive failures"))
+                         )))
     (when timed-out?
       ;;Communicate to job thread that job is timed out.
       (reset! (:timed-out? job) true))))
@@ -183,7 +187,7 @@
         ;;Lock a job record
         locked-job-count (db/sql env :update-record lock-job-scope)]
     (if (pos? locked-job-count)
-      (let [now (u/to-sql-time-string now)
+      (let [now (u/now)
             query-params (db/make-query-params env
                                                {:table table
                                                 :where [:and [[:locked-at := now]
@@ -214,7 +218,10 @@
     (catch Exception e
       (let [{:keys [e job yaml-exception?]} (u/parse-ex-info e)]
         (if yaml-exception?
-          (failed env (assoc job :exception e)) ;fail job immediately, yaml is no good.
+          (failed env (assoc job
+                             :exception e
+                             :fail-reason "yaml parse error"
+                             )) ;fail job immediately, yaml is no good.
           (do ;Panic! Reserving job went wrong!!!
             (logger env :error (str "Error while trying to reserve a job: \n" (u/exception-str e)))
             (let [fail-count (swap! failed-reserved-count inc)]
