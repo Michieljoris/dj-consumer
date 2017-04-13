@@ -22,6 +22,8 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
+;;TODO: last-error set it properly on job
+
 ;; Catch exceptions in threads. Otherwise they disappear and we'd never know about them!!
  ;; https://stuartsierra.com/2015/05/27/clojure-uncaught-exceptions
 (Thread/setDefaultUncaughtExceptionHandler
@@ -46,7 +48,7 @@
                :max-attempts 25
                :max-failed-reserve-count 10
                :delete-failed-jobs? false
-               :stop-on-reserve-fail false
+               :on-reserve-fail :stop ;or :throw
                :exit-on-complete? false
                :poll-interval 5 ;sleep in seconds between batch jobs
                :poll-batch-size 100 ;how many jobs to process for every poll
@@ -218,25 +220,27 @@
   "If a job can be reserved returns the result of the run (:success
   or :fail), otherwise returns nil. If configured will throw on too
   many reserve errors."
-  [{:keys [logger stop-on-reserve-fail max-failed-reserve-count failed-reserved-count] :as env}]
+  [{:keys [logger on-reserve-fail max-failed-reserve-count failed-reserved-count] :as env}]
   (try
     (if-let [job (reserve-job env)]
       (run env job)) ;never throws, just returns :success or :fail
     (catch Exception e
-      (let [{:keys [e job yaml-exception?]} (u/parse-ex-info e)]
+      (let [{{:keys [job yaml-exception?]} :context} (u/parse-ex-info e)]
         (if yaml-exception?
           (failed env (assoc job
                              :exception e
                              :fail-reason "yaml parse error"
                              )) ;fail job immediately, yaml is no good.
           (do ;Panic! Reserving job went wrong!!!
-            (logger env :error (str "Error while trying to reserve a job: \n" (u/exception-str e)))
+             (logger env :error (str "Error while trying to reserve a job: \n" (u/exception-str e)))
             (let [fail-count (swap! failed-reserved-count inc)]
-              (when (and stop-on-reserve-fail (> fail-count max-failed-reserve-count))
-                (stop-worker env)
-                ;; (throw (ex-info "Failed to reserve jobs" {:last-exception e
-                ;;                                           :failed-reserved-count @failed-reserved-count}))
-                ))))))))
+              (when (> fail-count max-failed-reserve-count)
+                (condp = on-reserve-fail
+                  :stop (stop-worker env)
+                  :throw (throw (ex-info "Failed to reserve jobs"
+                                         {:last-exception e
+                                          :failed-reserved-count @failed-reserved-count}))))))))
+      :fail)))
 
 (defn run-job-batch
   "Run a number of jobs in one batch, consecutively. Return map of
@@ -312,8 +316,10 @@
   "Creates a worker that processes delayed jobs found in the db on a
   separate thread. Each worker is independant from other workers and
   can be run in parallel."
-  [{:keys [worker-id verbose? db-conn db-config] :as env}]
+  [{:keys [worker-id verbose? db-conn db-config max-failed-reserve-count on-reserve-error] :as env}]
   {:pre [(some? worker-id)
+         (or (nil? on-reserve-error) (contains? #{:stop :throw} on-reserve-error))
+         (or (nil? max-failed-reserve-count) (number? max-failed-reserve-count))
          (some? (or db-conn db-config))]}
   (let [{:keys [db-conn db-config poll-interval worker-id] :as env} (merge defaults env)
         env (assoc env
@@ -492,3 +498,8 @@
 ;; (defn start [env stop-ch]
 ;;   (go-loop
 ;;       ))
+;; (async/go-loop [i 0]
+;;   (info "in go loop")
+;;   (throw (Exception. "bla"))
+;;   (if (< i 10)
+;;     (recur (inc i))))

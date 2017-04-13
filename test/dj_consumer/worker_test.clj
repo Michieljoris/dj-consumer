@@ -111,7 +111,7 @@
 
 (defn test-logger
   ([env level text]
-   (default-logger env nil level text))
+   (test-logger env nil level text))
   ([{:keys [worker-id log-atom]} {:keys [id name queue] :as job} level text]
    (let [queue-str (if queue (str ", queue=" queue))
          job-str (if job (str "Job " name " (id=" id queue-str ") " ))
@@ -807,7 +807,102 @@ invitation_id: 882\nfoo: bar"
                               (tn/reserve-job env))
             "yaml parser throws error,")))))
 
-(deftest reserve-and-run-one-job)
+(deftest reserve-and-run-one-job
+  (let [fn-called (atom {})
+        log-atom (atom [])
+        failed-reserved-count (atom 0)
+        some-exception (Exception. "some exception")
+        yaml-exception (ex-info "yaml parse error" {:yaml-exception? true})
+        env {:logger test-logger
+             :worker-id "some-worker"
+             :log-atom log-atom
+             :on-reserve-fail :stop
+             :max-failed-reserve-count 1
+             :failed-reserved-count failed-reserved-count}]
+    (with-redefs [dj-consumer.worker/reserve-job (fn [{:keys [throw-reserve] :as env}]
+                                                   (swap! fn-called assoc :reserve-job true)
+                                                   (if throw-reserve (throw throw-reserve))
+                                                   (:reserved-job env))
+                  dj-consumer.worker/run (fn [env job]
+                                           (swap! fn-called assoc :run job)
+                                           (:result job))
+                  dj-consumer.worker/failed (fn [env job]
+                                              (swap! fn-called assoc :failed job))
+                  dj-consumer.util/exception-str (constantly "some exception string")
+                  dj-consumer.worker/stop-worker (fn [env]
+                                                 (swap! fn-called assoc :stop-worker true))
+
+                  ]
+      (is (= (tn/reserve-and-run-one-job (assoc env :reserved-job
+                                                {:name "some-job"
+                                                 :id 1
+                                                 :result :job-result})) :job-result)
+          "returned value is whatever the run fn returned")
+      (is (= @fn-called {:reserve-job true,
+                         :run {:name "some-job", :id 1 :result :job-result}})
+          "reserve-job is called and then run with the reserved job")
+      (is (= @log-atom []) "nothing logged")
+      (is (= @failed-reserved-count 0))
+
+      (reset! fn-called {})
+      (reset! log-atom [])
+      (is (= (tn/reserve-and-run-one-job (assoc env
+                                                :throw-reserve yaml-exception
+                                                :reserved-job {:name "some-job" :id 1})) :fail)
+          "reserving job throws an yaml exception, our fn returns a :fail")
+      (is (= @fn-called {:reserve-job true,
+                         :failed {:exception yaml-exception
+                                  :fail-reason "yaml parse error"}})
+          "reserve-job is called, and then failed because yaml couldn't be parsed ")
+      (is (= @log-atom [])
+          "nothing is logged")
+      (is (= @failed-reserved-count 0)
+          "job is failed ")
+
+      ;Handling random reserve exceptions:
+      (reset! fn-called {})
+      (reset! log-atom [])
+      (is (= (tn/reserve-and-run-one-job (assoc env
+                                                :throw-reserve some-exception
+                                                :reserved-job {:name "some-job" :id 1})) :fail)
+          "reserving job throws an exception, our fn returns a :fail")
+      (is (= @fn-called {:reserve-job true,})
+          "reserve-job is called only ")
+      (is (= @log-atom [{:level :error,
+                         :text
+                         "[some-worker] Error while trying to reserve a job: \nsome exception string"}])
+          "reserve error is logged")
+      (is (= @failed-reserved-count 1)
+          "keeping track of number of reserve errors")
+
+      ;One more reserve error:
+      (reset! fn-called {})
+      (reset! log-atom [])
+      (is (= (tn/reserve-and-run-one-job (assoc env
+                                                :throw-reserve some-exception
+                                                :on-reserve-fail :stop
+                                                :reserved-job {:name "some-job" :id 1})) :fail)
+          "reserving job throws an exception, our fn returns a :fail")
+      (is (= @fn-called {:reserve-job true,
+                         :stop-worker true})
+          "reserve-job is called, then stop-worker because of too many reserve errors")
+      (is (= @log-atom [{:level :error,
+                         :text
+                         "[some-worker] Error while trying to reserve a job: \nsome exception string"}])
+          "reserve error is logged")
+      (is (= @failed-reserved-count 2)
+          "keeping track of number of reserve errors")
+      
+      (reset! fn-called {})
+      (reset! log-atom [])
+      (is (thrown-with-msg? Exception #"Failed to reserve jobs"
+                            (tn/reserve-and-run-one-job (assoc env
+                                                               :throw-reserve some-exception
+                                                               :on-reserve-fail :throw
+                                                               :reserved-job {:name "some-job" :id 1})) :fail)
+          "reserving job throws an exception, too many have been thrown, as configured the whole thing throws")
+      ))
+  )
 
 (deftest run-job-batch)
 

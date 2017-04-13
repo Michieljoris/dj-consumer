@@ -208,11 +208,12 @@
 
 (def custom-formatter
   ;; (time-format/formatter "yyyy-MM-dd HH-mm-ss Z")
-  (time-format/formatters :rfc822)
-  )
+  (time-format/formatters :rfc822))
 
 (defn exception-str [e]
-  (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
+  (if e
+    (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e))))
+    "exception=nil?"))
 
 (defn time->str [some-time]
   (time-format/unparse custom-formatter some-time))
