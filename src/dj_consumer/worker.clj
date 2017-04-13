@@ -142,20 +142,25 @@
   fail is requested from job hooks, otherwise fails job. If job is
   timed out resets timed-out? atom of job to true "
   [{:keys [logger] :as env} {:keys [attempts] :as job} e]
-  (logger env job :error
-          (str "FAILED to run. " "Failed " attempts " prior attempts. Last exception:\n")
-          (u/exception-str e))
   (let [max-attempts (or (:max-attempts job) (:max-attempts env))
         attempts (inc attempts)
         job (assoc job :attempts attempts)
-        {{:keys [failed? timed-out?]} :context} (u/parse-ex-info e)]
-    (if (and (not failed?) (< attempts max-attempts))
+        {{:keys [failed? timed-out?]} :context} (u/parse-ex-info e)
+        too-many-attempts? (>= attempts max-attempts)]
+    (logger env job :error
+            (str "FAILED to run. "
+                 (cond
+                   failed? (str "Job requested fail")
+                   too-many-attempts? (str "Failed " attempts " attempts."))
+                 " Last exception:\n" (u/exception-str e)
+                 ))
+    (if (not (or failed? too-many-attempts?))
       (reschedule env job)
       (failed env (assoc job
                          :exception e
                          :fail-reason (if failed?
-                                           "job requested to be failed"
-                                           (str attempts " consecutive failures"))
+                                        "job requested to be failed"
+                                        (str attempts " consecutive failures"))
                          )))
     (when timed-out?
       ;;Communicate to job thread that job is timed out.
@@ -170,7 +175,7 @@
   (try
     (let [{:keys [runtime]} (u/runtime (invoke-job-with-timeout job))]
       (db/sql env :delete-record {:id id :table table})
-      (logger env job :info "COMPLETED after " (humanize/duration runtime))
+      (logger env job :info (str "COMPLETED after " (humanize/duration runtime)))
       :success)
     (catch Exception e
       (handle-run-exception env job e)
@@ -181,14 +186,12 @@
   job if found or otherwise nil. Handler column of job record is
   assumed to be yaml and parsed into a map with a job and data key"
   [{:keys [table worker-id max-run-time] :as env}]
- 
   (let [now (u/now)
         lock-job-scope (db/make-lock-job-scope env now)
         ;;Lock a job record
         locked-job-count (db/sql env :update-record lock-job-scope)]
     (if (pos? locked-job-count)
-      (let [now (u/now)
-            query-params (db/make-query-params env
+      (let [query-params (db/make-query-params env
                                                {:table table
                                                 :where [:and [[:locked-at := now]
                                                               [:locked-by := worker-id]
@@ -252,12 +255,11 @@
   (reset! worker-status :stopped))
 
 (defn start-worker
-  "Start a async thread and loop till worker status changes to not
-  running. In the loop first run a batch of jobs. Log the result if
-  any jobs were done. If none were done, set worker status to :stopped
-  if exit-on-complete? flag is set. Then, as long as worker status
-  is :running sleep for poll-interval seconds and then recur loop.
-  Otherwise clear locks and exit async thread"
+  "Start a async thread and loops till worker status changes to not running. In
+  the loop first run a batch of jobs. Log the result if any jobs were done. If
+  none were done, set worker status to :stopped if exit-on-complete? flag is
+  set. Then, if worker status is :running sleep for poll-interval seconds and
+  then recur loop. Otherwise clear locks and exit async thread"
   [{:keys [logger poll-interval exit-on-complete? worker-status] :as env}]
   (reset! worker-status :running)
   (pprint (reserve-job env))
@@ -287,17 +289,18 @@
 (defrecord Worker [env]
   IWorker
   (start [this]
-    (info (str (:worker-id env) ": Starting"))
-    (let [{:keys [worker-status]} env]
-      (if (not= @worker-status :running)
-        (start-worker env)
-        (info "Worker was already running"))))
+    (let [{:keys [logger]} env]
+      (logger env :info "Starting")
+      (let [{:keys [worker-status]} env]
+        (if (not= @worker-status :running)
+          (start-worker env)
+          (logger env :info "Worker was already running")))))
   (stop [this]
-    (let [{:keys [worker-status]} env]
-      (info (str (:worker-id env) ": Stopping"))
+    (let [{:keys [worker-status logger]} env]
+      (logger env :info "Stopping")
       (if (= @worker-status :running)
         (stop-worker env) 
-        (info (str (:worker-id env) ": Worker was already not running")))))
+        (logger env :info "Worker was already not running"))))
   (status [this] @(:worker-status env))
   (env [this] env))
 

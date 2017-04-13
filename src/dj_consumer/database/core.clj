@@ -37,14 +37,13 @@
 (defn make-reserve-scope
   "Takes an environment and returns a map that defines the scope that
   finds one suitable job."
-  [{:keys [worker-id table queues min-priority max-priority cols] :as env}]
+  [{:keys [worker-id table queues min-priority max-priority] :as env}]
   {:pre [(string? worker-id)]}
   (let [nil-queue? (contains? (set queues) nil)
         queues (remove nil? queues)
         run-at-before-marker "run-at-before"
         locked-at-before-marker "locked-at-before"]
     (make-query-params env {:table table
-                            :cols cols
                             ;; From delayed_job_active_record ruby gem:
                             ;; (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL"
                             :where [:and (into [[:failed-at :is :null]

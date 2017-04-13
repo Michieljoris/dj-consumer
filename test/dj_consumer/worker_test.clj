@@ -23,54 +23,6 @@
    [jansi-clj.core :refer :all]
    ))
 
-(deftest default-logger
-  (is (= 1 1
-       ;; (tn/default-logger {:worker-id "some-worker" :table :job-table}
-       ;;                    {:id 1 :name :some-job :queue "some-queue"} :info "some text")
-       ;; "foo"
-       )))
-
-(defn make-job-fixtures [{:keys [default-job job-table]} jobs]
-  (let [all-keys (reduce (fn [ks job]
-                           (apply conj ks (keys job))
-                           ) #{} jobs)
-        minimal-default-job (reduce (fn [j k]
-                              (assoc j k (k default-job)))
-                            {} all-keys)]
-    (if-not (set/subset? (set all-keys) (set (keys default-job)))
-      (throw (ex-info "unknown job columns!" {:all-keys all-keys})))
-    {job-table (into [] (map-indexed #(merge minimal-default-job
-                                             %2
-                                             {:id (inc %1)})
-                                     jobs))}))
-
-(defn setup-test-db [{:keys [mysql-conn db-conn db-config] :as defaults} fixtures]
-  (if (seq fixtures)
-    (let [fixtures (make-job-fixtures defaults fixtures)]
-      (fixtures/setup-test-db mysql-conn
-                              db-conn
-                              db-config
-                              fixtures)
-      fixtures)))
-
-(defn job-table-data [{:keys [table]
-                       ;; {:keys [hours minutes]} :tz-offset
-                       {:keys [schema]} :db-config
-                       :as env}]
-  (let [jobs (db/sql env :select-all-from {:table table})
-        schema (table schema)]
-
-    (map (fn [job]
-           (into {} (map (fn [[col v]]
-                           [col (cond-> v
-                                  (and (some? v) (= :date-time (col schema)))
-                                  (time/to-time-zone  (time/default-time-zone)
-                                   ;; (time/time-zone-for-offset hours minutes)
-                                   )
-                                  )]
-                           )) job))
-         jobs)))
-
 (def defaults
   (let [test-db-name "dj_consumer_test"
         job-table :job-table
@@ -108,24 +60,38 @@
     {:env env
      :worker worker
      :fixtures (if (seq fixtures)
-                 (get (setup-test-db defaults fixtures) (:job-table defaults)))}))
+                 (get (fixtures/setup-job-test-db defaults fixtures) (:job-table defaults)))}))
 
-;; (deftest test-fixtures
-;;   (let [{:keys [env worker fixtures]}
-;;         (prepare-for-test defaults [{:locked-at nil}])]
-;;     ;; (testing "Simple test to test if fixtures are working :)"
-;;     ;;   (is (= (job-table-data env) fixtures)))
-;;     ))
+(defn job-table-data [{:keys [table]
+                       ;; {:keys [hours minutes]} :tz-offset
+                       {:keys [schema]} :db-config
+                       :as env}]
+  (let [jobs (db/sql env :select-all-from {:table table})
+        schema (table schema)]
 
+    (map (fn [job]
+           (into {} (map (fn [[col v]]
+                           [col (cond-> v
+                                  (and (some? v) (= :date-time (col schema)))
+                                  (time/to-time-zone  (time/default-time-zone)
+                                   ;; (time/time-zone-for-offset hours minutes)
+                                   )
+                                  )]
+                           )) job))
+         jobs)))
 
-;; (deftest clear-locks
-;;   (let [{:keys [env worker fixtures]}
-;;         (prepare-for-test defaults [{:locked-at (tn/now) :locked-by nil}])]
-;;     (tn/clear-locks env)
-;;     (is (job-table-data env) fixtures)))
+(deftest test-fixtures
+  (let [{:keys [env worker fixtures]}
+        (prepare-for-test defaults [{:locked-at nil}])]
+    (testing "Simple test to test if fixtures are working :)"
+      (is (= (job-table-data env) fixtures)))))
 
-(defn inst->str [x]
-  (.format (java.text.SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") x))
+(deftest default-logger
+  (is (= 1 1
+       ;; (tn/default-logger {:worker-id "some-worker" :table :job-table}
+       ;;                    {:id 1 :name :some-job :queue "some-queue"} :info "some text")
+       ;; "foo"
+       )))
 
 (deftest clear-locks
   (let [some-time (u/now)
@@ -354,11 +320,200 @@
     (is (= @log-atom [])
         "and still nothing is logged")))
 
-(deftest handle-run-exception)
+(deftest handle-run-exception
+  (let [log-atom (atom [])
+        {:keys [env worker fixtures]}
+        (prepare-for-test (update defaults :worker-config
+                                  (fn [worker-config]
+                                    (merge worker-config
+                                           {:delete-failed-jobs? true
+                                            :log-atom log-atom
+                                            :max-attempts 3
+                                            :logger test-logger})
+                                    ))
+                          [{:priority 0 :failed-at nil :attempts 1}
+                           {:priority 1 :failed-at nil}
+                           {}])
+        handle-called (atom {})
+        job1 {:name :job1 :id 1 :attempts 2}
+        some-exception (Exception. "job1 exception")
+        fail-exception (ex-info "job1 exception" {:failed? true})
+        timeout-exception (ex-info "job1 exception" {:timed-out? true})
+        timed-out? (atom nil)
+        ]
+    (with-redefs [dj-consumer.util/exception-str (fn [e] (.getMessage e))
+                  dj-consumer.worker/reschedule (fn [env job]
+                                                  (swap! handle-called assoc :reschedule job))
+                  dj-consumer.worker/failed (fn [env job]
+                                              (swap! handle-called assoc :failed job))
+                  ]
+      (tn/handle-run-exception env job1 some-exception)
+      (is (= @log-atom
+             [{:level :error,
+               :text
+               "[sample-worker] Job :job1 (id=1) FAILED to run. Failed 3 attempts. Last exception:\njob1 exception"}])
+          "Too many attempts as set in env. Exception is logged")
+      (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 3,
+                                      :exception some-exception,
+                                      :fail-reason "3 consecutive failures"}})
+          "failed is called, with proper fail-reason and the exception assoced to job")
 
-(deftest run)
+      (reset! log-atom [])
+      (reset! handle-called {})
+      (tn/handle-run-exception env (assoc job1 :attempts 1 :max-attempts 2) some-exception)
+      (is (= @log-atom
+             [{:level :error,
+               :text
+               "[sample-worker] Job :job1 (id=1) FAILED to run. Failed 2 attempts. Last exception:\njob1 exception"}])
+          "Too many attempts as set in job. Exception is logged")
+      (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 2, :max-attempts 2
+                                      :exception some-exception,
+                                      :fail-reason "2 consecutive failures"}})
+          "failed is called, with proper fail-reason and the exception assoced to job")
 
-(deftest reserve-job)
+      (reset! log-atom [])
+      (reset! handle-called {})
+      (tn/handle-run-exception env (assoc job1 :attempts 1) fail-exception)
+      (is (= @log-atom
+             [{:level :error,
+               :text
+               "[sample-worker] Job :job1 (id=1) FAILED to run. Job requested fail Last exception:\njob1 exception"}])
+          "Job requests fail by setting :failed? true to context of exception")
+      (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 2
+                                      :exception fail-exception
+                                      :fail-reason "job requested to be failed"}})
+          "failed is called, with proper fail-reason and the exception assoced to job")
+
+      (reset! log-atom [])
+      (reset! handle-called {})
+      (tn/handle-run-exception env (assoc job1
+                                          :attempts 2
+                                          :timed-out? timed-out?)
+                               timeout-exception)
+      (is (= @log-atom
+             [{:level :error,
+               :text
+               "[sample-worker] Job :job1 (id=1) FAILED to run. Failed 3 attempts. Last exception:\njob1 exception"}])
+          "timeout exception")
+      (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 3
+                                      :timed-out? timed-out?
+                                      :exception timeout-exception
+                                      :fail-reason "3 consecutive failures"}})
+          "failed is called, with proper fail-reason and the exception assoced to job")
+      (is (= @timed-out? true) "timed-out? atom on job is set to true")
+
+      (reset! log-atom [])
+      (reset! handle-called {})
+      (reset! timed-out? false)
+      (tn/handle-run-exception env (assoc job1
+                                          :attempts 1
+                                          :timed-out? timed-out?)
+                               some-exception)
+      (is (= @log-atom [{:level :error,
+                         :text
+                         "[sample-worker] Job :job1 (id=1) FAILED to run.  Last exception:\njob1 exception"}]
+             )
+          "some exception is logged properly")
+      (is (= @handle-called {:reschedule
+                             {:name :job1,
+                              :id 1,
+                              :attempts 2,
+                              :timed-out? timed-out?}})
+          "attempts is less than max-attempts and no failed? is requested from job: rescheduled is called")
+      (is (= @timed-out? false) "timed-out? atom on job is still set set to nil"))))
+
+(deftest run
+  (let [log-atom (atom [])
+        {:keys [env worker fixtures]}
+        (prepare-for-test (update defaults :worker-config
+                                  (fn [worker-config]
+                                    (merge worker-config
+                                           {:delete-failed-jobs? true
+                                            :log-atom log-atom
+                                            :max-attempts 3
+                                            :logger test-logger})
+                                    ))
+                          [{:priority 0 :failed-at nil :attempts 1}
+                           {:priority 1}
+                           {}])
+        fn-called (atom {})
+        job1 {:name :job1 :id 1 :attempts 2}
+        job2 {:name :job2 :id 2 :attempts 2}
+        some-exception (Exception. "job1 exception")]
+    (with-redefs [dj-consumer.util/runtime (fn [f] {:runtime 1})
+                  dj-consumer.worker/invoke-job-with-timeout (fn [job]
+                                                               (swap! fn-called assoc :invoke-job-with-timeout job)
+                                                               (if (= (:priority job) 1)
+                                                                 (throw some-exception))
+                                                               )
+                  dj-consumer.worker/handle-run-exception  (fn [env job e]
+                                                             (swap! fn-called assoc
+                                                                    :handle-run-exception job
+                                                                    :exception e
+                                                                    ))
+                  ]
+
+      (is (= (job-table-data env) [{:attempts 1 :failed-at nil :priority 0 :id 1}
+                                   {:attempts 0, :failed-at nil, :priority 1, :id 2}
+                                   {:attempts 0, :failed-at nil, :priority 0, :id 3}])
+          "all fixtures jobs are in job table")
+      (is (= (tn/run env job1) :success)
+          "No exception thrown in job, returns :true")
+      (is (= @log-atom [{:level :info, :text "[sample-worker] Job :job1 (id=1) RUNNING"}
+                        {:level :info,
+                         :text "[sample-worker] Job :job1 (id=1) COMPLETED after 1ms"}])
+          "job start run and completed are logged")
+      (is (= @fn-called {:invoke-job-with-timeout {:name :job1, :id 1, :attempts 2}})
+          "invoke-job-with-timeout is invoked with job")
+      (is (= (job-table-data env) [{:attempts 0, :failed-at nil, :priority 1, :id 2}
+                                   {:attempts 0, :failed-at nil, :priority 0, :id 3}])
+          "job1 is deleted")
+
+      (reset! log-atom [])
+      (reset! fn-called {})
+      (is (= (tn/run env (assoc job2 :priority 1)) :fail)
+          "Exception is thrown in job run, result is :fail")
+      (is (= @log-atom [{:level :info, :text "[sample-worker] Job :job2 (id=2) RUNNING"}])
+          "Only job RUNNING is logged")
+      (is (= @fn-called {:invoke-job-with-timeout {:name :job2, :id 2, :attempts 2, :priority 1}
+                         :handle-run-exception {:name :job2 :id 2, :attempts 2 :priority 1}
+                         :exception some-exception})
+          "both invoke-job and handle-run-exception are called")
+      (is (= (job-table-data env) [{:attempts 0, :failed-at nil, :priority 1, :id 2}
+                                   {:attempts 0, :failed-at nil, :priority 0, :id 3}])
+          "job2 is not deleted"))))
+
+(deftest reserve-job
+  (let [log-atom (atom [])
+        {:keys [env worker fixtures]}
+        (prepare-for-test (update defaults :worker-config
+                                  (fn [worker-config]
+                                    (merge worker-config
+                                           {:log-atom log-atom
+                                            :logger test-logger})
+                                    ))
+                          [{:run-at nil :failed-at nil
+                            :locked-at nil :locked-by nil
+                            :queue nil :priority 0}
+                           {}
+                           {}])
+        fn-called (atom {})
+        some-exception (Exception. "job1 exception")]
+    (with-redefs [dj-consumer.util/runtime (fn [f] {:runtime 1})
+                  dj-consumer.worker/invoke-job-with-timeout (fn [job]
+                                                               (swap! fn-called assoc :invoke-job-with-timeout job)
+                                                               (if (= (:priority job) 1)
+                                                                 (throw some-exception))
+                                                               )
+                  dj-consumer.worker/handle-run-exception  (fn [env job e]
+                                                             (swap! fn-called assoc
+                                                                    :handle-run-exception job
+                                                                    :exception e
+                                                                    ))
+                  ]
+
+      ))
+  )
 
 (deftest reserve-and-run-one-job)
 

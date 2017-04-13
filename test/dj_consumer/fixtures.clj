@@ -9,6 +9,9 @@
    [cuerdas.core :as str]
    [dj-consumer.util :as u :refer [includes? transform-keys underscore->hyphen hyphen->underscore]]
 
+   [clojure.set :as set]
+   [clj-time.core :as time]
+
    ;; logging
    [taoensso.timbre :as timbre
     :refer (log trace debug info warn error fatal report color-str
@@ -59,6 +62,29 @@
   (mysql/drop-db db-conn {:db-name db-name})
   (mysql/create-db db-conn {:db-name db-name})
   (create-tables-insert-rows test-db-conn (quasi-schema fixtures schema) fixtures))
+
+(defn make-job-fixtures [{:keys [default-job job-table]} jobs]
+  (let [all-keys (reduce (fn [ks job]
+                           (apply conj ks (keys job))
+                           ) #{} jobs)
+        minimal-default-job (reduce (fn [j k]
+                              (assoc j k (k default-job)))
+                            {} all-keys)]
+    (if-not (set/subset? (set all-keys) (set (keys default-job)))
+      (throw (ex-info "unknown job columns!" {:all-keys all-keys})))
+    {job-table (into [] (map-indexed #(merge minimal-default-job
+                                             %2
+                                             {:id (inc %1)})
+                                     jobs))}))
+
+(defn setup-job-test-db [{:keys [mysql-conn db-conn db-config] :as defaults} fixtures]
+  (if (seq fixtures)
+    (let [fixtures (make-job-fixtures defaults fixtures)]
+      (setup-test-db mysql-conn
+                              db-conn
+                              db-config
+                              fixtures)
+      fixtures)))
 
 ;; (defn make-db-fixture
 ;;   [{:keys [mysql-db-conn db-conn db-config] :as env} fixtures]

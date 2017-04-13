@@ -192,22 +192,12 @@
                          hyphen->underscore)
     (string? table) table))
 
-(defn get-local-tz-offset []
-  (let [now-in-ms (time-coerce/to-long (time/now))
-        offset (/ (.getOffset (time/default-time-zone) now-in-ms) 1000)
-        hours (int (/ offset 3600))
-        minutes (int (/ (rem offset 3600) 60))]
-    {:hours hours :minutes minutes}))
-
 (defn sql-time
     "Return some-time in utc, with explicit local timezone offset added,
 , so for instance you would get 2017-04-12T11:15:21.000+02:00 in
   Amsterdam at 13:15:21.000 local time"
     [some-time]
   (time/from-time-zone some-time (time/default-time-zone)))
-
-;; (sql-time (time/now))
-;; => #object[org.joda.time.DateTime 0x25d6584b "2017-04-12T14:54:16.000+02:00"]
 
 (defn now
     "Return now with milliseconds set to 0"
@@ -220,10 +210,44 @@
   (time-format/formatters :rfc822)
   )
 
-(do
-  (defn time->str [some-time]
-    (time-format/unparse custom-formatter some-time))
-  (time->str (now)))
+(defn exception-str [e]
+  (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
+
+(defn time->str [some-time]
+  (time-format/unparse custom-formatter some-time))
+
+
+
+;;Unused, using channel version, see worker.clj
+(defn timeout-using-future
+  "This blocks till either f has completed or timeout expires,
+  whichever comes first. If timeout occurs first, thread is not
+  actually stopped and will still run its course. However it's
+  possible to check for (Thread/interrupted) in f and end early. Will
+  throw if timeout occers, or if f throws exception "
+  [f ms]
+  (try
+    (let [fut (future (f))
+          future-result (deref fut ms :timeout)]
+      (when (= future-result :timeout)
+        (future-cancel fut)
+        (throw (ex-info (str "Function " (str f) " has timed out.") {:timeout? true}))
+        ;; future-result
+        ))
+    (catch Exception e
+      (let [{:keys [msg context]} (parse-ex-info e)]
+        (cond
+          (:timeout? context) (throw e)
+          (.getCause e) (throw (.getCause e))
+          :else (throw e))))))
+
+
+(defn get-local-tz-offset []
+  (let [now-in-ms (time-coerce/to-long (time/now))
+        offset (/ (.getOffset (time/default-time-zone) now-in-ms) 1000)
+        hours (int (/ offset 3600))
+        minutes (int (/ (rem offset 3600) 60))]
+    {:hours hours :minutes minutes}))
 
 ;; (now)
 ;; (time/now)
@@ -232,9 +256,6 @@
 ;; (time/to-time-zone (time/now) (time/default-time-zone))
 
 ;; (time-format/show-formatters)
-
-(defn exception-str [e]
-  (str (.toString e) "\nStacktrace:\n" (with-out-str (pprint (.getStackTrace e)))))
 
 
 ;; (do
