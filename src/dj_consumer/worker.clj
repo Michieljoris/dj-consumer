@@ -40,26 +40,29 @@
 
 ;; (default-logger {:worker-id "foo-worker"} {:queue "baz-q" :id 1 :name "bar-job"} "hello" :info)
 
-(def defaults {:max-attempts 25
-               :max-run-time (* 3600 4) ;4 hours
-               :reschedule-at (fn [some-time attempts]
-                                (time/plus some-time (time/seconds (Math/pow attempts 4))))
-               :listen? false
-               :verbose? false
-               :delete-failed-jobs? false
-               :logger default-logger
-               :sql-log? false
-               :table :delayed-job
-               :min-priority 0
-               :max-priority 10
+(def defaults {:table :delayed-job
+
+               ;;Worker behaviour
+               :max-attempts 25
                :max-failed-reserve-count 10
+               :delete-failed-jobs? false
                :stop-on-reserve-fail false
                :exit-on-complete? false
                :poll-interval 5 ;sleep in seconds between batch jobs
-               :poll-batch-size 100 ;how many jobs to process for every poll 
-               ;;Queues to process: nil processes all, [nil] processes nil
-               ;;queues, ["foo" nil] processes nil and "foo" queues
-               :queues nil})
+               :poll-batch-size 100 ;how many jobs to process for every poll
+               :reschedule-at (fn [some-time attempts]
+                                (time/plus some-time (time/seconds (Math/pow attempts 4))))
+
+               ;;Job selection:
+               :min-priority nil
+               :max-priority nil
+               :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
+
+               ;;Reporting
+               :verbose? false
+               :logger default-logger
+               :sql-log? false
+               })
 
 (defn clear-locks
   "Clears all locks for worker"
@@ -76,7 +79,7 @@
   (try
     (job/invoke-hook job/failed job)
     (catch Exception e
-      (logger env job :error 
+      (logger env job :error
               (str "Exception when running fail callback:\n" (u/exception-str e))))
     (finally
       (let [delete? (if (contains? job :delete-if-failed?)
@@ -104,7 +107,7 @@
                                                      {:table table
                                                       :updates {:locked-by nil
                                                                 :locked-at nil
-                                                                :attempts attempts 
+                                                                :attempts attempts
                                                                 :run-at (u/sql-time run-at)}
                                                       :where [:id := id]}))
     (logger env job :info (str "Rescheduled at " (u/time->str run-at)))))
@@ -132,7 +135,7 @@
                                     (invoke-job job)
                                     (catch Exception e
                                       e)))]
-      (async/alt!! 
+      (async/alt!!
         job-channel ([v _] (when (instance? Exception v)
                              (throw v)))
         timeout-channel (throw (ex-info (str "Job "(:name job) " has timed out.") {:timed-out? true})))))
@@ -190,13 +193,14 @@
         lock-job-scope (db/make-lock-job-scope env now)
         ;;Lock a job record
         locked-job-count (db/sql env :update-record lock-job-scope)]
+    (info "locked-job-count" locked-job-count)
     (if (pos? locked-job-count)
       (let [query-params (db/make-query-params env
                                                {:table table
-                                                :where [:and [[:locked-at := now]
+                                                :where [:and [[:locked-at := (u/to-sql-time-string now)]
                                                               [:locked-by := worker-id]
                                                               [:failed-at :is :null]]]})
-            ;;Retrieve locked record 
+            ;;Retrieve locked record
             job (first (db/sql env :get-cols-from-table query-params))
             job-config (job/invoke-hook job/config job)
             job (merge job (try (u/parse-ruby-yaml (:handler job))
@@ -274,7 +278,7 @@
       (when (and (zero? total-runs) exit-on-complete?)
         (logger env :info "No more jobs available. Exiting")
         (stop-worker env)))
-    (if (= @worker-status :running) 
+    (if (= @worker-status :running)
       (do
         (Thread/sleep poll-interval)
         (recur))
@@ -299,7 +303,7 @@
     (let [{:keys [worker-status logger]} env]
       (logger env :info "Stopping")
       (if (= @worker-status :running)
-        (stop-worker env) 
+        (stop-worker env)
         (logger env :info "Worker was already not running"))))
   (status [this] @(:worker-status env))
   (env [this] env))
@@ -322,46 +326,47 @@
     (->Worker (assoc env
                      :reserve-scope (db/make-reserve-scope env)
                      :failed-reserved-count (atom 0)
+                     :max-run-time (* 3600 4) ;4 hours, hardcoded for every worker!!!!
                      :worker-status (atom nil)))))
 
 
-(do
-  (let [worker (make-worker{:worker-id :sample-worker
-                            :sql-log? true
-                            :verbose true
-                            :db-config {:user "root"
-                                        :password ""
-                                        :url "//localhost:3306/"
-                                        :db-name "chin_minimal"
-                                        ;; :db-name "chinchilla_development"
-                                        }
+;; (do
+;;   (let [worker (make-worker{:worker-id :sample-worker
+;;                             :sql-log? true
+;;                             :verbose true
+;;                             :db-config {:user "root"
+;;                                         :password ""
+;;                                         :url "//localhost:3306/"
+;;                                         :db-name "chin_minimal"
+;;                                         ;; :db-name "chinchilla_development"
+;;                                         }
 
-                            })]
-    ;; (worker :start)
-    ;; (start worker)
-    (pprint (env worker))
-    )
+;;                             })]
+;;     ;; (worker :start)
+;;     ;; (start worker)
+;;     (pprint (env worker))
+;;     )
 
-  ;; (pprint (db/sql :select-all-from {:table :delayed-job}))
-  ;; (pprint (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
-  ;;                                       :where-clause
-  ;;                                       (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
-  ;;                                       }))
-  ;; (pprint handler-str)
+;;   ;; (pprint (db/sql :select-all-from {:table :delayed-job}))
+;;   ;; (pprint (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
+;;   ;;                                       :where-clause
+;;   ;;                                       (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
+;;   ;;                                       }))
+;;   ;; (pprint handler-str)
 
-  ;; (def handler-str (-> (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
-  ;;                                                    :where-clause
-  ;;                                                    (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
-  ;;                                                    })
-  ;;                      first
-  ;;                      :handler))
-  ;; (job/run:user/say-hello {:id 1} nil nil)
-  ;; (job/after :user/say-hello {:id 1})
-  ;; (job/run :invitation-expiration-reminder-job nil nil nil)
-  ;; (pprint handler-str)
-  ;; (pprint (parse-ruby-yaml handler-str))
-  ;; (pprint (retrieve-jobs (merge @config {:now (now)})))
-  )
+;;   ;; (def handler-str (-> (db/sql :get-cols-from-table {:table :delayed-job :cols [:id :handler]
+;;   ;;                                                    :where-clause
+;;   ;;                                                    (cl/conds->sqlvec :delayed-job "" nil [:id] [:id := 2988200])
+;;   ;;                                                    })
+;;   ;;                      first
+;;   ;;                      :handler))
+;;   ;; (job/run:user/say-hello {:id 1} nil nil)
+;;   ;; (job/after :user/say-hello {:id 1})
+;;   ;; (job/run :invitation-expiration-reminder-job nil nil nil)
+;;   ;; (pprint handler-str)
+;;   ;; (pprint (parse-ruby-yaml handler-str))
+;;   ;; (pprint (retrieve-jobs (merge @config {:now (now)})))
+;;   )
 
 ;; (try
 ;;   (/ 3 0)
@@ -386,7 +391,7 @@
 ;;       (throw (ex-info "123" {}))
 ;;       (>! c :ok)
 ;;       )
-    
+
 ;;     (pprint (<!! c)))
 ;;   )
 
@@ -438,13 +443,13 @@
 ;;           (:timeout? context) (throw e)
 ;;           (.getCause e) (throw (.getCause e))
 ;;           :else (throw e)))
-        
+
 ;;       )
 ;;     ))
 
 ;; (do
 ;;   ; http://stackoverflow.com/questions/11520394/why-do-cancelled-clojure-futures-continue-using-cpu/14540878#14540878
-  
+
 
 ;;   ;; (throwing-timeout {} {:name "some-job"} (fn []
 ;;   ;;                                   (info "hello")
@@ -452,12 +457,12 @@
 ;;   ;;                                   ))
 ;;   )
 
-        
+
 ;;         (info (exception-str e))
-        
-;;         (info (exception-str (.getCause e))) 
-;;         (info (.toString e)) 
-;;         (info (.toString (.getCause e))) 
+
+;;         (info (exception-str (.getCause e)))
+;;         (info (.toString e))
+;;         (info (.toString (.getCause e)))
 ;;         (info (exception-str e))
 
 ;; (defn start-poll [env stop-ch]

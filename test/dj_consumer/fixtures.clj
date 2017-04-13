@@ -30,7 +30,7 @@
 (defn quasi-schema [fixtures schema]
   (let [tables (mapv (comp hyphen->underscore name) (keys fixtures))
         columns (letfn [(h->u [table row]
-                          (let [cols (keys row)]
+                          (let [cols (or (keys row) (keys (get schema table)))]
                             {:cols (mapv u/keyword->underscored-string cols)
                              :cols-defs (mapv (fn [col]
                                                 (let [col-type (get sql-types (get-in schema [table col]))]
@@ -55,8 +55,9 @@
                        )
                      rows)]
       (mysql/create-table db-conn  {:table-name table-name :columns cols-defs} {:quoting :off})
-      (mysql/insert-rows db-conn {:table-name table-name :cols cols ;; (conj cols table-id)
-                                  :rows rows}))))
+      (if (seq rows)
+        (mysql/insert-rows db-conn {:table-name table-name :cols cols ;; (conj cols table-id)
+                                    :rows rows})))))
 
 (defn setup-test-db [db-conn test-db-conn {:keys [db-name schema]} fixtures]
   (mysql/drop-db db-conn {:db-name db-name})
@@ -78,13 +79,12 @@
                                      jobs))}))
 
 (defn setup-job-test-db [{:keys [mysql-conn db-conn db-config] :as defaults} fixtures]
-  (if (seq fixtures)
-    (let [fixtures (make-job-fixtures defaults fixtures)]
-      (setup-test-db mysql-conn
-                              db-conn
-                              db-config
-                              fixtures)
-      fixtures)))
+  (let [fixtures (make-job-fixtures defaults fixtures)]
+    (setup-test-db mysql-conn
+                   db-conn
+                   db-config
+                   fixtures)
+    fixtures))
 
 ;; (defn make-db-fixture
 ;;   [{:keys [mysql-db-conn db-conn db-config] :as env} fixtures]

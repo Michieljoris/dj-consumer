@@ -59,25 +59,26 @@
         ]
     {:env env
      :worker worker
-     :fixtures (if (seq fixtures)
-                 (get (fixtures/setup-job-test-db defaults fixtures) (:job-table defaults)))}))
+     :fixtures (get (fixtures/setup-job-test-db defaults fixtures) (:job-table defaults))}))
 
-(defn job-table-data [{:keys [table]
-                       ;; {:keys [hours minutes]} :tz-offset
-                       {:keys [schema]} :db-config
-                       :as env}]
-  (let [jobs (db/sql env :select-all-from {:table table})
-        schema (table schema)]
+(defn prepare-for-test-merge-worker-config [defaults some-worker-config fixtures]
+  (prepare-for-test (update defaults :worker-config
+                            (fn [worker-config]
+                              (merge worker-config some-worker-config)))
+                    fixtures))
 
-    (map (fn [job]
-           (into {} (map (fn [[col v]]
-                           [col (cond-> v
-                                  (and (some? v) (= :date-time (col schema)))
-                                  (time/to-time-zone  (time/default-time-zone)
-                                   ;; (time/time-zone-for-offset hours minutes)
-                                   )
-                                  )]
-                           )) job))
+(defn adjust-tz [{:keys [table]
+                  {:keys [schema]} :db-config} job]
+  (let [schema (table schema)]
+    (into {} (map (fn [[col v]]
+                    [col (cond-> v
+                           (and (some? v) (= :date-time (col schema)))
+                           (time/to-time-zone (time/default-time-zone)))])
+                  job))))
+
+(defn job-table-data [{:keys [table] :as env}]
+  (let [jobs (db/sql env :select-all-from {:table table})]
+    (map (partial adjust-tz env)
          jobs)))
 
 (deftest test-fixtures
@@ -484,36 +485,327 @@
           "job2 is not deleted"))))
 
 (deftest reserve-job
-  (let [log-atom (atom [])
-        {:keys [env worker fixtures]}
-        (prepare-for-test (update defaults :worker-config
-                                  (fn [worker-config]
-                                    (merge worker-config
-                                           {:log-atom log-atom
-                                            :logger test-logger})
-                                    ))
-                          [{:run-at nil :failed-at nil
-                            :locked-at nil :locked-by nil
-                            :queue nil :priority 0}
-                           {}
-                           {}])
-        fn-called (atom {})
-        some-exception (Exception. "job1 exception")]
-    (with-redefs [dj-consumer.util/runtime (fn [f] {:runtime 1})
-                  dj-consumer.worker/invoke-job-with-timeout (fn [job]
-                                                               (swap! fn-called assoc :invoke-job-with-timeout job)
-                                                               (if (= (:priority job) 1)
-                                                                 (throw some-exception))
-                                                               )
-                  dj-consumer.worker/handle-run-exception  (fn [env job e]
-                                                             (swap! fn-called assoc
-                                                                    :handle-run-exception job
-                                                                    :exception e
-                                                                    ))
-                  ]
+  (let [u-now (u/now)
+        now (u/sql-time u-now)
+        a-minute-ago (time/minus now (time/minutes 1))
+        two-minutes-ago (time/minus now (time/minutes 2))
+        three-minutes-ago (time/minus now (time/minutes 3))
+        five-hours-ago (time/minus now (time/hours 5))]
+    (with-redefs [dj-consumer.util/now (constantly u-now)]
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {} [])]
+        (let [job (tn/reserve-job env)]
+          (is (= job nil)
+              "return nil if no job is found")
+          (is (empty? (job-table-data env))
+              "job table is still empty")))
 
-      ))
-  )
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at a-minute-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority nil}])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue nil,
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority nil,
+                                      :id 1,
+                                      :run-at a-minute-ago,
+                                      :locked-at now})
+              "Finds job that has run-at<now")
+          (is (= (job-table-data env) [{:queue nil,
+                                        :locked-by "sample-worker",
+                                        :locked-at now
+                                        :failed-at nil,
+                                        :priority nil,
+                                        :run-at a-minute-ago
+                                        :id 1}])
+              "Job is locked")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {:min-priority 1
+                                                            :max-priority 10}
+                                                  [{:run-at a-minute-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority nil}
+                                                   {:run-at a-minute-ago
+                                                    :priority 0}
+                                                   {:run-at a-minute-ago
+                                                    :priority 1}
+                                                   {:run-at two-minutes-ago
+                                                    :priority 1}])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue nil,
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority 1,
+                                      :id 4,
+                                      :run-at two-minutes-ago,
+                                      :locked-at now})
+              "Finds job that has lowest run-at and run-at<now and lowest priority within range")
+          (is (= (job-table-data env) (update-in fixtures [3]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked")))
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {:min-priority 1
+                                                            :max-priority 10}
+                                                  [{:run-at two-minutes-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority nil}
+                                                   {:run-at a-minute-ago
+                                                    :priority 0}
+                                                   {:run-at a-minute-ago
+                                                    :priority 11}])]
+        (let [job (tn/reserve-job env)]
+          (is (= job nil)
+              "No job is within min and max priority ")
+          (is (= (job-table-data env) fixtures)
+              "Job table is not changed")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {:queues ["q1" "q2"]}
+                                                  [{:run-at three-minutes-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority nil}
+                                                   {:run-at a-minute-ago
+                                                    :queue "q1"}
+                                                   {:run-at two-minutes-ago
+                                                    :queue "q2" }
+                                                   {:run-at three-minutes-ago
+                                                    :queue "q3" :priority 0}
+                                                   ])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue "q2",
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority 0,
+                                      :id 3,
+                                      :run-at two-minutes-ago
+                                      :locked-at now})
+              "Select job from queues as set for worker picking the older run-at, ignoring jobs with
+              higher priority and/or older run-at, but wrong queue")
+          (is (= (job-table-data env) (update-in fixtures [2]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked")))
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {:queues [nil]}
+                                                  [{:run-at two-minutes-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority nil}
+                                                   {:run-at a-minute-ago
+                                                    :queue nil}
+                                                   {:run-at three-minutes-ago
+                                                    :queue "q" :priority 0}
+                                                   ])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue nil,
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority nil,
+                                      :id 1,
+                                      :run-at two-minutes-ago
+                                      :locked-at now})
+              "[nil] for queues ignores jobs with named queue")
+          (is (= (job-table-data env) (update-in fixtures [0]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {:queues [nil "q1"]}
+                                                  [{:run-at two-minutes-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority 2}
+                                                   {:run-at a-minute-ago
+                                                    :queue "q1" :priority 1}
+                                                   {:run-at three-minutes-ago
+                                                    :queue "q2" :priority 0}
+                                                   ])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue "q1",
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority 1,
+                                      :id 2,
+                                      :run-at a-minute-ago
+                                      :locked-at now})
+              "[nil \"q1\"] for queues ignores jobs other than nil and q1 queues")
+          (is (= (job-table-data env) (update-in fixtures [1]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at three-minutes-ago
+                                                    :failed-at two-minutes-ago
+                                                    :locked-at nil :locked-by nil
+                                                    :queue nil :priority nil}
+                                                   ])]
+        (let [job (tn/reserve-job env)]
+          (is (nil? job )
+              "only available job has :failed-at set so no job found")
+          (is (= (job-table-data env) fixtures)
+              "Job table is unchanged")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at three-minutes-ago
+                                                    :failed-at nil
+                                                    :locked-at three-minutes-ago
+                                                    :locked-by nil
+                                                    :queue nil :priority nil}
+                                                   ])]
+        (let [job (tn/reserve-job env)]
+          (is (nil? job)
+              "only available job has :locked-at set so no job found")
+          (is (= (job-table-data env) fixtures)
+              "Job table is unchanged")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at a-minute-ago
+                                                    :failed-at nil
+                                                    :locked-at five-hours-ago
+                                                    :locked-by "some-other-worker"
+                                                    :queue nil :priority nil}
+                                                   ])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue nil,
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority nil,
+                                      :id 1,
+                                      :run-at a-minute-ago
+                                      :locked-at now})
+              "Job is locked, but locked-at is longer than 4 hours, so has
+              definitely timed out and is considered failed, so job is
+              reserved")
+          (is (= (job-table-data env) (update-in fixtures [0]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked (again by this worker)"))
+        )
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at nil
+                                                    :failed-at nil
+                                                    :locked-at nil
+                                                    :locked-by "sample-worker"
+                                                    :queue nil :priority nil}
+                                                   ])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload nil,
+                                      :queue nil,
+                                      :name :unknown-job-name,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority nil,
+                                      :id 1,
+                                      :run-at nil
+                                      :locked-at now})
+              "Job is locked, but locked-by current worker. So reserving job
+              irrespective of value of run-at.")
+          (is (= (job-table-data env) (update-in fixtures [0]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked (again by this worker)")))
+
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at a-minute-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :handler "--- !ruby/struct:InvitationExpirationReminderJob
+invitation_id: 882\nfoo: bar"
+                                                    :queue nil :priority nil}])]
+        (let [job (tn/reserve-job env)
+              job (update job :timed-out? deref)]
+          (is (= (adjust-tz env job) {:payload {:invitation_id 882 :foo "bar"},
+                                      :name :invitation-expiration-reminder-job,
+                                      :handler "--- !ruby/struct:InvitationExpirationReminderJob
+invitation_id: 882\nfoo: bar"
+                                      :queue nil,
+                                      :locked-by "sample-worker",
+                                      :timed-out? false,
+                                      :max-run-time 14400,
+                                      :failed-at nil,
+                                      :priority nil,
+                                      :id 1,
+                                      :run-at a-minute-ago,
+                                      :locked-at now})
+              "yaml is parsed, and payload and name keys set")
+          (is (= (job-table-data env) (update-in fixtures [0]
+                                                 (fn [job]
+                                                   (assoc job
+                                                          :locked-at now
+                                                          :locked-by "sample-worker"))))
+              "Job is locked")
+          ))
+      (let [{:keys [env worker fixtures]}
+            (prepare-for-test-merge-worker-config defaults {}
+                                                  [{:run-at a-minute-ago
+                                                    :failed-at nil
+                                                    :locked-at nil :locked-by nil
+                                                    :handler "foo: bar\nbaz boz"
+                                                    :queue nil :priority nil}])]
+        (is (thrown-with-msg? Exception #"Exception thrown parsing job yaml"
+                              (tn/reserve-job env))
+            "yaml parser throws error,")))))
 
 (deftest reserve-and-run-one-job)
 

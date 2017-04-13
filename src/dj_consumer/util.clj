@@ -127,13 +127,14 @@
   (let [s (or s "")
         struct-name (extract-rails-struct-name s)
         object-name (extract-rails-obj-name s)
-        data (yaml/parse-string
-              (remove-!ruby-annotations s))
+        data  (yaml/parse-string
+               (remove-!ruby-annotations s))
         method-name (:method_name data)]
     {:name (or (camel->keyword struct-name)
                (if (and object-name method-name) (camel->keyword object-name method-name))
                :unknown-job-name)
-     :payload data}))
+     :payload data}
+    ))
 
 (defmacro runtime
   "Evaluates expr and returns a map with the time it took in ms
