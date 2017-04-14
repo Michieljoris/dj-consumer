@@ -130,7 +130,7 @@
   [{:keys [logger table] :as env} {:keys [id attempts] :as job}]
   (logger env job :info "RUNNING")
   (try
-    (let [{:keys [runtime]} (u/runtime (invoke-job-with-timeout job))]
+    (let [{:keys [runtime]} (u/runtime invoke-job-with-timeout job)]
       (db/sql env :delete-record {:id id :table table})
       (logger env job :info (str "COMPLETED after " (humanize/duration runtime)))
       :success)

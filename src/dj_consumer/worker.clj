@@ -71,7 +71,7 @@
   (reset! worker-status :running)
   (async/go-loop []
     (let [{:keys [runtime]
-           {:keys [success fail]}:result} (u/runtime (rr/run-job-batch env))
+           {:keys [success fail]}:result} (u/runtime rr/run-job-batch env)
           total-runs (+ success fail)
           jobs-per-second (int (/ total-runs (/ runtime 1000.0)))]
       (when (pos? total-runs)
