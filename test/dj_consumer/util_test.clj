@@ -16,7 +16,6 @@
    [jansi-clj.core :refer :all]
    ))
 
-(tn/extract-rails-obj-name y)
 (deftest parse-ruby-yaml
   (is (= (tn/parse-ruby-yaml "--- !ruby/struct:InvitationExpirationReminderJob
 invitation_id: 882\nfoo: bar")

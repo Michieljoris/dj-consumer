@@ -39,7 +39,8 @@
   thrown is an ex-info with context set to {:failed? true}" dispatch)
 
 (defmethod config :default [_ job])
-(defmethod run :default [k job] (timbre/error "Implementation is missing for job " k))
+(defmethod run :default [k job] (throw (ex-info (str "Implementation is missing for job " k)
+                                                {:failed? true})))
 (defmethod exception :default [_ job])
 (defmethod finally :default [_ job])
 (defmethod failed :default [_ job])

@@ -1,9 +1,11 @@
-(ns dj-consumer.fixtures
+(ns dj-consumer.test-util
   (:require
+   [clojure.core.async :as async]
    [clojure.test :refer [use-fixtures is deftest testing]]
    [dj-consumer.database.queries :as mysql]
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.database.core :as db]
+   [dj-consumer.worker :as worker]
 
    ;; String manipulation
    [cuerdas.core :as str]
@@ -21,6 +23,35 @@
    ;; https://github.com/xsc/jansi-clj
    ;; (println "ERROR:" (underline "This" " is " "a message."))
    [jansi-clj.core :refer :all]))
+
+(def defaults
+  (let [test-db-name "dj_consumer_test"
+        job-table :job-table
+        db-config {:user "root"
+                   :password ""
+                   :url "//localhost:3306/"
+                   :schema {:job-table {:priority :int
+                                        :id :int
+                                        :attempts :int
+                                        :handler :long-text
+                                        :last-error :long-text
+                                        :run-at :date-time
+                                        :locked-at :date-time
+                                        :failed-at :date-time
+                                        :locked-by :text
+                                        :queue :text}}
+                   :db-name test-db-name}]
+    {:test-db-name test-db-name
+     :job-table job-table
+     :db-config db-config
+     :mysql-conn (db-conn/make-db-conn (assoc db-config :db-name "mysql"))
+     :db-conn (db-conn/make-db-conn db-config)
+     :worker-config {:db-config db-config
+                     :worker-id :sample-worker
+                     :table job-table
+                     :sql-log? true}
+     :default-job {:priority 0 :attempts 0 :handler nil :last-error nil
+                   :run-at nil :locked-at nil :failed-at nil :locked-by nil :queue nil}}))
 
 (def sql-types {:int "int"
                 :date-time "datetime"
@@ -85,6 +116,46 @@
                    db-config
                    fixtures)
     fixtures))
+
+(defn prepare-for-test [defaults fixtures]
+  (let [worker (worker/make-worker (:worker-config defaults))
+        env (worker/env worker)]
+    {:env env
+     :worker worker
+     :fixtures (get (setup-job-test-db defaults fixtures) (:job-table defaults))}))
+
+(defn prepare-for-test-merge-worker-config [defaults some-worker-config fixtures]
+  (prepare-for-test (update defaults :worker-config
+                            (fn [worker-config]
+                              (merge worker-config some-worker-config)))
+                    fixtures))
+
+(defn adjust-tz [{:keys [table]
+                  {:keys [schema]} :db-config} job]
+  (let [schema (table schema)]
+    (into {} (map (fn [[col v]]
+                    [col (cond-> v
+                           (and (some? v) (= :date-time (col schema)))
+                           (time/to-time-zone (time/default-time-zone)))])
+                  job))))
+
+(defn job-table-data [{:keys [table] :as env}]
+  (let [jobs (db/sql env :select-all-from {:table table})]
+    (map (partial adjust-tz env)
+         jobs)))
+
+(defn test-logger
+  ([env level text]
+   (test-logger env nil level text))
+  ([{:keys [worker-id log-atom log-ch]} {:keys [id name queue] :as job} level text]
+   (if log-ch
+     (async/put! log-ch {:job job
+                         :level level
+                         :text text}))
+   (let [queue-str (if queue (str ", queue=" queue))
+         job-str (if job (str "Job " name " (id=" id queue-str ") " ))
+         text (str "[" worker-id "] " job-str text)]
+     (swap! log-atom #(conj % {:level level :text text})))))
 
 ;; (defn make-db-fixture
 ;;   [{:keys [mysql-db-conn db-conn db-config] :as env} fixtures]

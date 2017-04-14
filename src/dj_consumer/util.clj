@@ -136,16 +136,16 @@
      :payload data}
     ))
 
-(defmacro runtime
+(defn runtime
   "Evaluates expr and returns a map with the time it took in ms
   under :runtime and the result of the expression under :result "
-  [expr]
-  `(let [start# (. System (nanoTime))
-         ret# ~expr]
-     {:runtime (/ (double (- (. System (nanoTime)) start#)) 1000000.0)
-      :result ret#}))
+  [f  & args]
+  (let [start (. System (nanoTime))
+        result (apply f args)]
+    {:runtime (/ (double (- (. System (nanoTime)) start)) 1000000.0)
+     :result result}))
 
-;; (runtime (do (Thread/sleep 1000) :foo))
+;; (runtime (fn [] (do (Thread/sleep 1000) :foo)))
 ;; => {:result :foo, :runtime 1000.432838}
 
 (defn parse-ex-info [e]
