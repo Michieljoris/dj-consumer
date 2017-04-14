@@ -148,10 +148,10 @@
   ([env level text]
    (test-logger env nil level text))
   ([{:keys [worker-id log-atom log-ch]} {:keys [id name queue] :as job} level text]
-   (if log-ch
-     (async/put! log-ch {:job job
-                         :level level
-                         :text text}))
+   ;; (if log-ch
+   ;;   (async/put! log-ch {:job job
+   ;;                       :level level
+   ;;                       :text text}))
    (let [queue-str (if queue (str ", queue=" queue))
          job-str (if job (str "Job " name " (id=" id queue-str ") " ))
          text (str "[" worker-id "] " job-str text)]

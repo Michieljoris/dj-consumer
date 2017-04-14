@@ -85,72 +85,84 @@
 ;;   "Set worker status to :stopped"
 ;;   [{:keys [worker-status] :as env}]
 ;;   (reset! worker-status :stopped))
-(do
-  (def log-ch (chan))
-  (def log-atom (atom []))
-
-  (let [{:keys [env worker fixtures]}
-        (tu/prepare-for-test-merge-worker-config tu/defaults
-                                                 {:logger tu/test-logger
-                                                  :log-atom log-atom
-                                                  :exit-on-complete? true
-                                                  :log-ch log-ch
-
-                                                  ;; :max-attempts 25
-                                                  ;; :max-failed-reserve-count 10
-                                                  ;; :delete-failed-jobs? false
-                                                  ;; :on-reserve-fail :stop ;or :throw
-                                                  ;; :poll-interval 5 ;sleep in seconds between batch jobs
-                                                  ;; :poll-batch-size 100 ;how many jobs to process for every poll
-                                                  ;; :reschedule-at (fn [some-time attempts]
-                                                  ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
-
-                                                  ;; ;;Job selection:
-                                                  ;; :min-priority nil
-                                                  ;; :max-priority nil
-                                                  ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
-                                                  }
-                                                 [{:priority nil
-                                                   :attempts 0
-                                                   :handler nil
-                                                   :last-error nil
-                                                   :run-at now
-                                                   :locked-at nil
-                                                   :failed-at nil
-                                                   :locked-by nil
-                                                   :queue nil}])]
-    (def tworker worker)
-    (def tfixtures fixtures)
-    (def tenv env)
-    ))
+(with-redefs [dj-consumer.util/exception-str (fn [e]
+                                               (str "Exception: " (.getMessage e)))
+              ;; dj-consumer.worker/stop-worker (fn [{:keys [log-ch] :as env}]
+              ;;                                  (put! log-ch :stop)
+              ;;                                  (info "in test stop worker")
+              ;;                                  (stop-worker env))
+              ]
 
 
-(do
-  (def stop-worker worker/stop-worker)
-  (def timeout-channel  (async/timeout 20000))
-  (def log-ch (chan))
+  (do
+    (def log-ch (chan))
+    (def log-atom (atom []))
 
-  (with-redefs [dj-consumer.worker/stop-worker (fn [{:keys [log-ch] :as env}]
-                                                 (put! log-ch :stop)
-                                                 (info "in test stop worker")
-                                                 (stop-worker env))]
-    (worker/start tworker))
+    (let [{:keys [env worker fixtures]}
+          (tu/prepare-for-test-merge-worker-config tu/defaults
+                                                   {:logger tu/test-logger
+                                                    :log-atom log-atom
+                                                    :exit-on-complete? true
+                                                    :log-ch log-ch
 
-  (loop [counter 0]
-    (info "Counter: " counter)
-    (let [{:keys [job text level] :as result}
-          (async/alt!!
-            log-ch ([v _] v)
-            timeout-channel :stop)]
-      (info "Result:" result)
-      (if-not (or (= result :stop)
-                  (str/contains? text "Exiting")
-                  (> counter 10))
-        (recur (inc counter))
-        (info "Done")))))
+                                                    ;; :max-attempts 25
+                                                    ;; :max-failed-reserve-count 10
+                                                    ;; :delete-failed-jobs? false
+                                                    ;; :on-reserve-fail :stop ;or :throw
+                                                    :poll-interval 1 ;sleep in seconds between batch jobs
+                                                    ;; :poll-batch-size 100 ;how many jobs to process for every poll
+                                                    ;; :reschedule-at (fn [some-time attempts]
+                                                    ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
 
-(put! log-ch {:text "sdfa Exiting"})
-(pprint (deref log-atom))
+                                                    ;; ;;Job selection:
+                                                    ;; :min-priority nil
+                                                    ;; :max-priority nil
+                                                    ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
+                                                    }
+                                                   [{:priority nil
+                                                     :attempts 0
+                                                     :handler nil
+                                                     :last-error nil
+                                                     :run-at now
+                                                     :locked-at nil
+                                                     :failed-at nil
+                                                     :locked-by nil
+                                                     :queue nil}])]
+      (def tworker worker)
+      (def tfixtures fixtures)
+      (def tenv env)
+      ))
+
+
+  (do
+
+    (let [{:keys [worker-status]} tenv]
+      (add-watch worker-status :status (fn [_ _ _ status]
+                                         (if (= status :stopped)
+                                           (put! log-ch :stop))
+                                         )))
+    (reset! log-atom [])
+    (def stop-worker worker/stop-worker)
+    (def timeout-channel  (async/timeout 10000))
+
+
+    (worker/start tworker)
+
+    (loop [counter 0]
+      (let [{:keys [job text level] :as result}
+            (async/alt!!
+              log-ch ([v _] v)
+              timeout-channel :timeout)]
+        (if-not (or (= result :stop)
+                    (= result :timeout)
+                    ;; (str/contains? text "Exiting")
+                    (> counter 10))
+          (recur (inc counter))))))
+
+  (pprint (deref log-atom))
+  (pprint (tu/job-table-data tenv))
+  )
+
 
 
 

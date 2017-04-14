@@ -357,7 +357,8 @@
         job1 {:name :job1 :id 1 :attempts 2}
         job2 {:name :job2 :id 2 :attempts 2}
         some-exception (Exception. "job1 exception")]
-    (with-redefs [dj-consumer.util/runtime (fn [f & args] {:runtime 1})
+    (with-redefs [dj-consumer.util/runtime (fn [f & args] (apply f args)
+                                             {:runtime 1})
                   dj-consumer.reserve-and-run/invoke-job-with-timeout
                   (fn [job]
                     (swap! fn-called assoc :invoke-job-with-timeout job)
