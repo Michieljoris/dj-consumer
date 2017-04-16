@@ -155,6 +155,43 @@
          text (str "[" worker-id "] " job-str text)]
      (swap! log-atom #(conj % {:level level :text text})))))
 
+(def u-now (u/now))
+(def now (u/sql-time u-now))
+(def a-minute-ago (time/minus now (time/minutes 1)))
+(def two-minutes-ago (time/minus now (time/minutes 2)))
+(def three-minutes-ago (time/minus now (time/minutes 3)))
+(def five-hours-ago (time/minus now (time/hours 5)))
+
+(defn <!!-status-change
+  ([status-change-ch] (<!!-status-change status-change-ch (* 10 1000)))
+  ([status-change-ch timeout]
+   (let [timeout-ch (async/timeout timeout)]
+     (async/alt!!
+       status-change-ch ([v _] v)
+       timeout-ch :timeout))))
+
+(defn watch-worker-status [worker-status status-change-ch]
+  (add-watch worker-status :status (fn [_ _ _ status]
+                                     (async/put! status-change-ch status))))
+
+(defn setup-worker-test [{:keys [worker-config job-records]}]
+  (let [status-change-ch (async/chan)
+        log-atom (atom [])
+        {:keys [env worker fixtures]}
+        (prepare-for-test-merge-worker-config defaults
+                                                 (merge worker-config
+                                                        {:logger test-logger
+                                                         :log-atom log-atom})
+                                                 job-records)]
+
+    (watch-worker-status (:worker-status env) status-change-ch)
+
+    {:worker worker
+     :env env
+     :fixtures fixtures
+     :<!!-status (partial <!!-status-change status-change-ch)
+     :log-atom log-atom}))
+
 ;; (defn make-db-fixture
 ;;   [{:keys [mysql-db-conn db-conn db-config] :as env} fixtures]
 ;;   (fn [test-fn]

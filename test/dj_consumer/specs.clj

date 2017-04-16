@@ -1,0 +1,229 @@
+(ns dj-consumer.specs
+  (:require
+   [clojure.spec :as s]
+   [clojure.test :as t :refer [deftest is]]
+   [clojure.test.check.generators]
+   [clojure.spec.gen :as spec.gen]
+   [clojure.spec.test :as st]
+   [clojure.future :refer :all]
+   [dj-consumer
+    [job :as job]
+    [test-util :as tu]
+    [util :as u]
+    [worker :as worker]]
+   [clojure.pprint :refer [pprint]]
+   ))
+
+;; :schema {:job-table {:priority :int
+;;                      :id :int
+;;                      :attempts :int
+;;                      :handler :long-text
+;;                      :last-error :long-text
+;;                      :run-at :date-time
+;;                      :locked-at :date-time
+;;                      :failed-at :date-time
+;;                      :locked-by :text
+;;                      :queue :text}}
+
+(s/def ::priority (s/nilable int?))
+(s/def ::attempts (s/nilable nat-int?))
+(s/def ::handler (s/nilable string?))
+(s/def ::last-error (s/nilable string?))
+(s/def ::run-at (s/nilable string?))
+(s/def ::locked-at (s/nilable string?))
+(s/def ::failed-at (s/nilable string?))
+(s/def ::locked-by (s/nilable string?))
+(s/def ::queue (s/nilable string?))
+
+(s/def ::job-record (s/keys :req-un [::priority ::attempts ::handler ::last-error ::run-at ::locked-at ::failed-at ::locked-by ::queue]))
+
+(s/explain-str ::job-record {:id 1 :priority 0 :attempts 0 :handler nil :last-error nil
+                             :run-at nil :locked-at nil :failed-at nil :locked-by nil :queue nil})
+
+(defn run-worker [worker-config job-records methods-called]
+  (let [{:keys [env fixtures worker <!!-status log-atom]}
+        (tu/setup-worker-test
+         {:worker-config (merge worker-config {:exit-on-complete? true})
+          :job-records [{}]})] ;this'll insert a default job
+    (with-redefs [dj-consumer.util/exception-str
+                  (fn [e] (str "Exception: " (.getMessage e)))]
+      (worker/start worker)
+      (loop []
+        (let [status (<!!-status)]
+          (if-not (contains? #{:stopped :timeout :done} status)
+            (recur)
+            {:log-atom @log-atom
+             :methods-called methods-called
+             :status status
+             :job-table-data (tu/job-table-data env)}
+            ))))))
+
+(pprint (run-worker nil [] :methods-called))
+
+(->> (st/check 'run-worker) st/summarize-results)
+
+;; (defn ref? [x] (instance? clojure.lang.IDeref x))
+
+(s/def ::job-records (s/coll-of ::job-record :max-count 3))
+(pprint (s/exercise ::job-records 10))
+
+(s/def ::ref? #(instance? clojure.lang.IDeref %))
+
+(s/def ::run-worker-args (s/cat :worker-config (s/nilable map?) :job-records ::job-records ))
+
+(pprint (s/exercise ::run-worker-args 10))
+
+(s/explain-str ::run-worker-args [nil [] (atom [])])
+(s/conform ::run-worker-args [{} [] (atom [])])
+
+(comment
+
+  (s/def ::int integer?)
+  (s/def ::even-int (s/and ::int even?))
+  (s/def ::even-ints (s/* ::even-int))
+  (s/def ::even-ints+string
+    (s/cat :even-ints ::even-ints
+           :string string?))
+  (s/valid? ::int :foo)
+  ;; => false
+  (s/conform ::int 1)                   ;=parse
+  ;; => 1
+  (s/conform ::int :foo)
+  ;; => :clojure.spec/invalid
+  (s/conform ::even-ints+string  [0 2 4 "bla"])
+  ;; => {:even-ints [0 2 4], :string "bla"}
+  (with-out-str (s/explain ::even-ints+string  [0 2 5 "bla"]))
+  ;; => "In: [2] val: 5 fails spec: :dj-consumer.worker-test/even-ints+string at: [:string] predicate: string?\n"
+  (s/explain ::even-int :foo)
+  ;; Prints:
+  ;; val: :foo fails spec: :scratch.core/int predicate: integer?
+  (s/exercise ::even-int 10)
+  ;; => ([0 0] [0 0] [-2 -2] [0 0] [-2 -2] [2 2] [2 2] [6 6] [30 30] [86 86])
+  (s/exercise ::even-ints 10)
+  ;; => ([() []] [(-6) [-6]] [(0) [0]] [(0 0) [0 0]] [() []] [(0 0) [0 0]] [(0 0 -2 126 10 -42) [0 0 -2 126 10 -42]] [(-2 58 -4 -4 -2 -20 22) [-2 58 -4 -4 -2 -20 22]] [(-2 -8) [-2 -8]] [(2 -2 0 6) [2 -2 0 6]])
+  (s/exercise ::even-ints+string 10)
+  ;; => ([("") {:string ""}] [("") {:string ""}] [(0 "") {:even-ints [0], :string ""}] [("") {:string ""}] [(-10 2 -4 -14 "V") {:even-ints [-10 2 -4 -14], :string "V"}] [(30 -16 -4 "7I") {:even-ints [30 -16 -4], :string "7I"}] [(0 0 -2 0 6 6 "89w") {:even-ints [0 0 -2 0 6 6], :string "89w"}] [(0 0 0 4 26 -4 -28 "K42G6O") {:even-ints [0 0 0 4 26 -4 -28], :string "K42G6O"}] [(310 0 -2 34 -2 -14 0 0 "BtzugcE") {:even-ints [310 0 -2 34 -2 -14 0 0], :string "BtzugcE"}] [(648 0 114 -8 "wQ1r6") {:even-ints [648 0 114 -8], :string "wQ1r6"}])
+
+  ;; example fn
+  (defn my-index-of
+    "Returns the index at which search appears in source"
+    [source search]
+    (clojure.string/index-of source search))
+
+  (->> (st/check 'my-index-of) st/summarize-results)
+
+  (my-index-of "foobar" "b")
+  ;; => 3
+  (apply my-index-of ["foobar" "b"])
+  ;; => 3
+
+  ;; spec regex
+  (s/def ::index-or-args (s/cat :source string? :search string?))
+
+  ;; validation
+  (s/valid? ::index-or-args ["foo" "f"])
+  ;; => true
+  (s/valid? ::index-or-args ["foo" 3])
+  ;; => false
+
+  ;; conformance & destructuring
+  (s/conform ::index-or-args ["foo" "f"])
+  ;; => {:source "foo", :search "f"}
+  (s/unform ::index-or-args {:source "foo", :search "f"})
+  ;; => ("foo" "f")
+
+  ;; precise errors
+  (s/explain ::index-or-args ["foo" 3])
+  ;; In: [1] val: 3 fails spec: :scratch.core/index-or-args at: [:search] predicate: string?
+  (s/explain-str ::index-or-args ["foo" 3])
+  ;; => "In: [1] val: 3 fails spec: :scratch.core/index-or-args at: [:search] predicate: string?\n"
+  (s/explain-data ::index-or-args ["foo" 3])
+  ;; => #:clojure.spec{:problems [{:path [:search], :pred string?, :val 3, :via [:scratch.core/index-or-args], :in [1]}]}
+
+  ;; composition
+  (s/explain-str (s/every ::index-or-args) [["good" "a"]
+                                            ["ok" "b"]
+                                            ["bad" 42]])
+  ;; => "In: [2 1] val: 42 fails spec: :scratch.core/index-or-args at: [:search] predicate: string?\n"
+
+  ;; example data generation
+  (s/exercise ::index-or-args)
+  ;; => ([("" "") {:source "", :search ""}] [("H" "p") {:source "H", :search "p"}] [("Bi" "F") {:source "Bi", :search "F"}] [("14" "96m") {:source "14", :search "96m"}] [("i8j" "00") {:source "i8j", :search "00"}] [("Z0" "rTq") {:source "Z0", :search "rTq"}] [("" "w") {:source "", :search "w"}] [("f" "wB") {:source "f", :search "wB"}] [("" "Qn8") {:source "", :search "Qn8"}] [("ce58BKzyH" "W") {:source "ce58BKzyH", :search "W"}])
+
+  ;; assertion
+  (s/check-asserts true)
+  (s/assert ::index-or-args ["foo" "f"])
+  ;; => ["foo" "f"]
+  (s/assert ::index-or-args ["foo" [42]])
+  ;; 1. Unhandled clojure.lang.ExceptionInfo
+  ;;    Spec assertion failed In: [1] val: [42] fails at: [:search] predicate:
+  ;;    string? :clojure.spec/failure :assertion-failed
+
+  ;; specing a function
+  (s/fdef my-index-of
+          :args (s/cat :source string? :search string?)
+          :ret #(integer? %1)
+          :fn #(<= (:ret %) (-> % :args :source count)))
+
+  ;; documentation
+  (clojure.repl/doc my-index-of)
+  ;; -------------------------
+  (my-index-of "" "0")
+  ;; scratch.core/my-index-of
+  ;; ([source search])
+  ;;   Returns the index at which search appears in source
+  ;; Spec
+  ;;   args: (cat :source string? :search string?)
+  ;;   ret: nat-int?
+  ;;   fn: (<= (:ret %) (-> % :args :source count))
+
+  ;; generative testing
+  (->> (st/check `my-index-of) st/summarize-results)
+
+  ;; {:spec
+  ;;  (fspec
+  ;;   :args
+  ;;   (cat :source string? :search string?)
+  ;;   :ret
+  ;;   nat-int?
+  ;;   :fn
+  ;;   (<= (:ret %) (-> % :args :source count))),
+  ;;  :sym scratch.core/my-index-of,
+  ;;  :failure
+  ;;  {:clojure.spec/problems
+  ;;   [{:path [:ret], :pred nat-int?, :val nil, :via [], :in []}],
+  ;;   :clojure.spec.test/args ("" "0"),
+  ;;   :clojure.spec.test/val nil,
+  ;;   :clojure.spec/failure :check-failed}}
+
+  ;; instrumentation
+  (st/instrument 'scratch.core/my-index-of)
+  ;; => [scratch.core/my-index-of]
+  (st/instrument `my-index-of)
+  ;; => [scratch.core/my-index-of]
+
+  (my-index-of "foo" 42)
+
+
+;; 1. Unhandled clojure.lang.ExceptionInfo
+;;    Call to #'scratch.core/my-index-of did not conform to spec: In: [1] val: 42
+;;    fails at: [:args :search] predicate: string? :clojure.spec/args ("foo" 42)
+;;    :clojure.spec/failure :instrument :clojure.spec.test/caller {:file
+;;    "boot.user2804818953269192308.clj", :line 122, :var-scope
+;;    scratch.core/eval47552330}
+
+;; (s/def ::bla  integer?)
+;; (s/valid? ::bla [2])
+;; (s/conform ::bla [1])
+;; (s/explain ::bla [1])
+;; (s/exercise ::bla 10)
+
+;; (def peg? #{:y :g :r :c :w :b})
+
+
+;; (s/def ::code (s/coll-of peg? :min-count 4 :max-count 6))
+
+;; (s/fdef score
+;;         :args (s/cat :secret ::code :guess ::code))
+
+  )

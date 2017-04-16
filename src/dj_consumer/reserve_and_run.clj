@@ -100,7 +100,7 @@
   "Logs job run exception. Reschedules job if attempts left and no
   fail is requested from job hooks, otherwise fails job. If job is
   timed out resets timed-out? atom of job to true "
-  [{:keys [logger] :as env} {:keys [attempts] :as job} e]
+  [{:keys [logger] :as env} {:keys [attempts] :or [attempts 0]:as job} e]
   (let [max-attempts (or (:max-attempts job) (:max-attempts env))
         attempts (inc attempts)
         job (assoc job :attempts attempts)

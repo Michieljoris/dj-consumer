@@ -1,32 +1,15 @@
 (ns dj-consumer.worker-test
-  (:require
-   [dj-consumer.database.core :as db]
-   [dj-consumer.database.connection :as db-conn]
-   [dj-consumer.util :as u]
-   [dj-consumer.job :as job]
-   [dj-consumer.test-util :as tu]
-
-   [clojure.test :as t :refer [deftest is use-fixtures testing]]
-   [clojure.core.async :as async  :refer (<! <!! >! >!! put! take! alts! alts!! chan go go-loop close!)]
-
-   [clj-time.core :as time]
-   [clj-time.coerce :as time-coerce]
-   [clj-time.local :as time-local]
-   [clojure.set :as set]
-
-   [cuerdas.core :as str]
-
-   [dj-consumer.worker :as worker]
-
-   ;; logging
-   [taoensso.timbre :as timbre
-    :refer (log  trace  debug  info  warn  error  fatal  report color-str
-                 logf tracef debugf infof warnf errorf fatalf reportf
-                 spy get-env log-env)]
-   [clojure.pprint :refer (pprint)]
-   [jansi-clj.core :refer :all]
-   ))
-
+  (:require [clj-time.core :as time]
+            [clojure
+             [spec :as s]
+             [test :as t :refer [deftest is testing]]]
+            [clojure.core.async :as async :refer [chan put!]]
+            [clojure.spec.test :as st]
+            [dj-consumer
+             [job :as job]
+             [test-util :as tu]
+             [util :as u]
+             [worker :as worker]]))
 
 (def methods-called (atom {}))
 
@@ -34,49 +17,13 @@
   (swap! methods-called assoc-in [k :run] job)
   )
 
-(def u-now (u/now))
-(def now (u/sql-time u-now))
-(def a-minute-ago (time/minus now (time/minutes 1)))
-(def two-minutes-ago (time/minus now (time/minutes 2)))
-(def three-minutes-ago (time/minus now (time/minutes 3)))
-(def five-hours-ago (time/minus now (time/hours 5)))
-
-(defn <!!-status-change
-  ([status-change-ch] (<!!-status-change status-change-ch (* 10 1000)))
-  ([status-change-ch timeout]
-   (let [timeout-ch (async/timeout timeout)]
-     (async/alt!!
-       status-change-ch ([v _] v)
-       timeout-ch :timeout))))
-
-(defn watch-worker-status [worker-status status-change-ch]
-  (add-watch worker-status :status (fn [_ _ _ status]
-                                     (put! status-change-ch status))))
-
-(defn setup-worker-test [{:keys [worker-config job-records]}]
-  (let [status-change-ch (chan)
-        log-atom (atom [])
-        {:keys [env worker fixtures]}
-        (tu/prepare-for-test-merge-worker-config tu/defaults
-                                                 (merge worker-config
-                                                        {:logger tu/test-logger
-                                                         :log-atom log-atom})
-                                                 job-records)]
-
-    (reset! methods-called {})
-    (watch-worker-status (:worker-status env) status-change-ch)
-
-    {:worker worker
-     :env env
-     :fixtures fixtures
-     :<!!-status (partial <!!-status-change status-change-ch)
-     :log-atom log-atom}))
 
 (deftest worker-empty-job-table
   (let [{:keys [env fixtures worker <!!-status log-atom]}
-        (setup-worker-test
+        (tu/setup-worker-test
          {:worker-config  {:exit-on-complete? true}
           :job-records []})]
+    (reset! methods-called {})
     (with-redefs [dj-consumer.util/exception-str
                   (fn [e] (str "Exception: " (.getMessage e)))]
       (worker/start worker)
@@ -98,7 +45,7 @@
 (deftest worker-one-job-no-run-at
   (testing "One job in table, but all fields are default or nil, so also run-at"
     (let [{:keys [env fixtures worker <!!-status log-atom]}
-          (setup-worker-test
+          (tu/setup-worker-test
            {:worker-config  {:exit-on-complete? true}
             :job-records [{}]})] ;this'll insert a default job
       (with-redefs [dj-consumer.util/exception-str

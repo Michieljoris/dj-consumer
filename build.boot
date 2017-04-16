@@ -33,6 +33,8 @@
                  ;; Task to reload clojure code automatically on save
                  [samestep/boot-refresh "0.1.0" :scope "test"]
                  [adzerk/boot-test "1.2.0" :scope "test"]
+                 [clojure-future-spec "1.9.0-alpha15"]
+                 [org.clojure/test.check "0.9.0"]
 
                  ;; Logging
                  [com.taoensso/timbre      "4.8.0"]
