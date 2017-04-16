@@ -50,7 +50,7 @@
                      :worker-id :sample-worker
                      :table job-table
                      :sql-log? true}
-     :default-job {:priority 0 :attempts 0 :handler nil :last-error nil
+     :default-job {:id 1 :priority 0 :attempts 0 :handler nil :last-error nil
                    :run-at nil :locked-at nil :failed-at nil :locked-by nil :queue nil}}))
 
 (def sql-types {:int "int"
@@ -59,7 +59,8 @@
                 :long-text "longtext"})
 
 (defn quasi-schema [fixtures schema]
-  (let [tables (mapv (comp hyphen->underscore name) (keys fixtures))
+  (let [
+        tables (mapv (comp hyphen->underscore name) (keys fixtures))
         columns (letfn [(h->u [table row]
                           (let [cols (or (keys row) (keys (get schema table)))]
                             {:cols (mapv u/keyword->underscored-string cols)
@@ -95,10 +96,11 @@
   (mysql/create-db db-conn {:db-name db-name})
   (create-tables-insert-rows test-db-conn (quasi-schema fixtures schema) fixtures))
 
-(defn make-job-fixtures [{:keys [default-job job-table]} jobs]
+(defn make-job-fixtures [{:keys [default-job job-table] {:keys [schema]} :db-config} jobs]
   (let [all-keys (reduce (fn [ks job]
                            (apply conj ks (keys job))
                            ) #{} jobs)
+        all-keys (if (seq all-keys) all-keys (keys (get schema job-table)))
         minimal-default-job (reduce (fn [j k]
                               (assoc j k (k default-job)))
                             {} all-keys)]
@@ -148,10 +150,6 @@
   ([env level text]
    (test-logger env nil level text))
   ([{:keys [worker-id log-atom log-ch]} {:keys [id name queue] :as job} level text]
-   ;; (if log-ch
-   ;;   (async/put! log-ch {:job job
-   ;;                       :level level
-   ;;                       :text text}))
    (let [queue-str (if queue (str ", queue=" queue))
          job-str (if job (str "Job " name " (id=" id queue-str ") " ))
          text (str "[" worker-id "] " job-str text)]
@@ -163,39 +161,39 @@
 ;;     (setup-test-db mysql-db-conn db-conn (:db-name db-config) fixtures)
 ;;     (test-fn)))
 
-;; (do
+(do
 
-;;   ;; (create-tables-insert-rows nil (quasi-schema fixtures schema) fixtures)
-;;   ;; Test use-fixtures
-;;   (def fixtures {:job-table [{:priority 1 :handler nil :id 0 :last-error "bla"}]})
+  ;; (create-tables-insert-rows nil (quasi-schema fixtures schema) fixtures)
+  ;; Test use-fixtures
+  (def fixtures {:job-table [{}]})
 
-;;   (def db-config {:user "root"
-;;                   :password ""
-;;                   :url "//localhost:3306/"
-;;                   :db-name "dj_consumer_test"
-;;                   :schema  {:job-table {:priority :int
-;;                                         :attempts :int
-;;                                         :id :int
-;;                                         :handler :long-text
-;;                                         :last-error :long-text
-;;                                         :run-at :date-time
-;;                                         :locked-at :date-time
-;;                                         :failed-at :date-time
-;;                                         :locked-by :text
-;;                                         :queue :text}}
-;;                   })
+  (def db-config {:user "root"
+                  :password ""
+                  :url "//localhost:3306/"
+                  :db-name "dj_consumer_test"
+                  :schema  {:job-table {:priority :int
+                                        :attempts :int
+                                        :id :int
+                                        :handler :long-text
+                                        :last-error :long-text
+                                        :run-at :date-time
+                                        :locked-at :date-time
+                                        :failed-at :date-time
+                                        :locked-by :text
+                                        :queue :text}}
+                  })
 
-;;   (def mysql-db-conn (db-conn/make-db-conn (assoc db-config :db-name "mysql")))
-;;   (def test-db-conn (db-conn/make-db-conn db-config))
-;;   (setup-test-db mysql-db-conn test-db-conn db-config fixtures)
+  (def mysql-db-conn (db-conn/make-db-conn (assoc db-config :db-name "mysql")))
+  (def test-db-conn (db-conn/make-db-conn db-config))
+  (setup-test-db mysql-db-conn test-db-conn db-config fixtures)
 
 
-;;   ;; (def env {:db-config (assoc db-config :db-name test-db-name)
-;;   ;;           :mysql-db-conn mysql-db-conn
-;;   ;;           :db-conn test-db-conn})
+  ;; (def env {:db-config (assoc db-config :db-name test-db-name)
+  ;;           :mysql-db-conn mysql-db-conn
+  ;;           :db-conn test-db-conn})
 
-;;   ;; (use-fixtures :each (make-db-fixture env fixtures))
-;;   )
+  ;; (use-fixtures :each (make-db-fixture env fixtures))
+  )
 
 ;; (deftest test-fixtures
 ;;     (testing "Simple test to test if fixtures are working :)"

@@ -798,8 +798,8 @@ invitation_id: 882\nfoo: bar"
           "reserving job throws an exception, our fn returns a :fail")
       (is (= @fn-called {:reserve-job true,})
           "reserve-job is called")
-      (is (= @(:worker-status env) :stopped)
-          "worker status is now stopped")
+      (is (= @(:worker-status env) :crashed)
+          "worker status is now crashed")
       (is (= @log-atom [{:level :error,
                          :text
                          "[some-worker] Error while trying to reserve a job: \nsome exception string"}])

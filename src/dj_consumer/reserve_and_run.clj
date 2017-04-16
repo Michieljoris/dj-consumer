@@ -185,7 +185,7 @@
             (let [fail-count (swap! failed-reserved-count inc)]
               (when (> fail-count max-failed-reserve-count)
                 (condp = on-reserve-fail
-                  :stop (reset! worker-status :stopped)
+                  :stop (reset! worker-status :crashed)
                   :throw (throw (ex-info "Failed to reserve jobs"
                                          {:last-exception e
                                           :failed-reserved-count @failed-reserved-count}))))))))
@@ -196,11 +196,11 @@
   success and fail count. We're running in a thread, so we check
   worker status and stop processing the batch if worker status in
   not :running"
-  [{:keys [exit-on-complete? poll-batch-size worker-status logger] :as env}]
+  [{:keys [exit-on-complete? job-batch-size worker-status logger] :as env}]
   (loop [result-count {:success 0 :fail 0}
          counter 0]
     (if-let [success-or-fail (and (= @worker-status :running)
-                                  (< counter poll-batch-size)
+                                  (< counter job-batch-size)
                                   (reserve-and-run-one-job env))]
       (recur (update result-count success-or-fail inc)
              (inc counter))

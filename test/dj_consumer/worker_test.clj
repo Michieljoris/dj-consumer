@@ -29,7 +29,6 @@
 
 
 (def methods-called (atom {}))
-(def log-atom (atom []))
 
 (defmethod job/run :job1 [k job]
   (swap! methods-called assoc-in [k :run] job)
@@ -42,140 +41,168 @@
 (def three-minutes-ago (time/minus now (time/minutes 3)))
 (def five-hours-ago (time/minus now (time/hours 5)))
 
-;; (deftest worker
-;;   (let [{:keys [env worker fixtures]}
-;;         (tu/prepare-for-test-merge-worker-config tu/defaults
-;;                                                  {:logger tu/test-logger
-;;                                                   :log-atom log-atom
-;;                                                   :exit-on-complete? true
+(defn <!!-status-change
+  ([status-change-ch] (<!!-status-change status-change-ch (* 10 1000)))
+  ([status-change-ch timeout]
+   (let [timeout-ch (async/timeout timeout)]
+     (async/alt!!
+       status-change-ch ([v _] v)
+       timeout-ch :timeout))))
 
-;;                                                   ;; :max-attempts 25
-;;                                                   ;; :max-failed-reserve-count 10
-;;                                                   ;; :delete-failed-jobs? false
-;;                                                   ;; :on-reserve-fail :stop ;or :throw
-;;                                                   ;; :poll-interval 5 ;sleep in seconds between batch jobs
-;;                                                   ;; :poll-batch-size 100 ;how many jobs to process for every poll
-;;                                                   ;; :reschedule-at (fn [some-time attempts]
-;;                                                   ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
+(defn watch-worker-status [worker-status status-change-ch]
+  (add-watch worker-status :status (fn [_ _ _ status]
+                                     (put! status-change-ch status))))
 
-;;                                                   ;; ;;Job selection:
-;;                                                   ;; :min-priority nil
-;;                                                   ;; :max-priority nil
-;;                                                   ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
-;;                                                   }
-;;                                               [{:priority nil
-;;                                                 :attempts 0
-;;                                                 :handler nil
-;;                                                 :last-error nil
-;;                                                 :run-at now
-;;                                                 :locked-at nil
-;;                                                 :failed-at nil
-;;                                                 :locked-by nil
-;;                                                 :queue nil}
+(defn setup-worker-test [{:keys [worker-config job-records]}]
+  (let [status-change-ch (chan)
+        log-atom (atom [])
+        {:keys [env worker fixtures]}
+        (tu/prepare-for-test-merge-worker-config tu/defaults
+                                                 (merge worker-config
+                                                        {:logger tu/test-logger
+                                                         :log-atom log-atom})
+                                                 job-records)]
 
-;;                                                ])
-;;         ]
-;;     (reset! log-atom [])
-;;     ;; (tn/start worker)
-;;     (is (= (tu/job-table-data env) :??))
-;;     )
-;;   )
+    (reset! methods-called {})
+    (watch-worker-status (:worker-status env) status-change-ch)
 
-;; (defn stop-worker
-;;   "Set worker status to :stopped"
-;;   [{:keys [worker-status] :as env}]
-;;   (reset! worker-status :stopped))
-(with-redefs [dj-consumer.util/exception-str (fn [e]
-                                               (str "Exception: " (.getMessage e)))
-              ;; dj-consumer.worker/stop-worker (fn [{:keys [log-ch] :as env}]
-              ;;                                  (put! log-ch :stop)
-              ;;                                  (info "in test stop worker")
-              ;;                                  (stop-worker env))
-              ]
+    {:worker worker
+     :env env
+     :fixtures fixtures
+     :<!!-status (partial <!!-status-change status-change-ch)
+     :log-atom log-atom}))
+
+(deftest worker-empty-job-table
+  (let [{:keys [env fixtures worker <!!-status log-atom]}
+        (setup-worker-test
+         {:worker-config  {:exit-on-complete? true}
+          :job-records []})]
+    (with-redefs [dj-consumer.util/exception-str
+                  (fn [e] (str "Exception: " (.getMessage e)))]
+      (worker/start worker)
+      (loop []
+        (let [status (<!!-status)]
+          (if-not (contains? #{:stopped :timeout :done} status)
+            (recur)
+            (is (= status :done)
+                "No jobs in table, exit-on-complete, so end status is done")))))
+    (is (= (deref methods-called) {})
+        "No methods called of course")
+    (is (= (deref log-atom) [{:level :info, :text "[sample-worker] Starting"}
+                             {:level :info,
+                              :text "[sample-worker] No more jobs available. Exiting"}])
+        "Start and exit logged")
+    (is (empty? (tu/job-table-data env))
+        "Job table is empty")))
+
+(deftest worker-one-job-no-run-at
+  (testing "One job in table, but all fields are default or nil, so also run-at"
+    (let [{:keys [env fixtures worker <!!-status log-atom]}
+          (setup-worker-test
+           {:worker-config  {:exit-on-complete? true}
+            :job-records [{}]})] ;this'll insert a default job
+      (with-redefs [dj-consumer.util/exception-str
+                    (fn [e] (str "Exception: " (.getMessage e)))]
+        (worker/start worker)
+        (loop []
+          (let [status (<!!-status)]
+            (if-not (contains? #{:stopped :timeout :done} status)
+              (recur)
+              (is (= status :done)
+                  "No jobs in table, exit-on-complete, so end status is done")))))
+      (is (= (deref methods-called) {})
+          "No methods called of course")
+      (is (= (deref log-atom) [{:level :info, :text "[sample-worker] Starting"}
+                               {:level :info,
+                                :text "[sample-worker] No more jobs available. Exiting"}])
+          "Start and exit logged")
+      (is (= (tu/job-table-data env) [{:last-error nil,
+                                       :queue nil,
+                                       :locked-by nil,
+                                       :attempts 0,
+                                       :failed-at nil,
+                                       :priority 0,
+                                       :id 1,
+                                       :run-at nil,
+                                       :handler nil,
+                                       :locked-at nil}])
+          "Job table is unchanged"))))
+
+;; (deftest worker-one-job-with-run-at-now
+;;   (testing "One job in table, with run-at set to now"
+;;     (let [{:keys [env fixtures worker <!!-status log-atom]}
+;;           (setup-worker-test
+;;            {:worker-config  {:exit-on-complete? true}
+;;             :job-records [{}]})] ;this'll insert a default job
+;;       (with-redefs [dj-consumer.util/exception-str
+;;                     (fn [e] (str "Exception: " (.getMessage e)))]
+;;         (worker/start worker)
+;;         (loop []
+;;           (let [status (<!!-status)]
+;;             (if-not (contains? #{:stopped :timeout :done} status)
+;;               (recur)
+;;               (is (= status :done)
+;;                   "No jobs in table, exit-on-complete, so end status is done")))))
+;;       (is (= (deref methods-called) {})
+;;           "No methods called of course")
+;;       (is (= (deref log-atom) [{:level :info, :text "[sample-worker] Starting"}
+;;                                {:level :info,
+;;                                 :text "[sample-worker] No more jobs available. Exiting"}])
+;;           "Start and exit logged")
+;;       (is (= (tu/job-table-data env) [{:last-error nil,
+;;                                        :queue nil,
+;;                                        :locked-by nil,
+;;                                        :attempts 0,
+;;                                        :failed-at nil,
+;;                                        :priority 0,
+;;                                        :id 1,
+;;                                        :run-at nil,
+;;                                        :handler nil,
+;;                                        :locked-at nil}])
+;;           "Job table is unchanged"))))
 
 
-  (do
-    (def log-ch (chan))
-    (def log-atom (atom []))
-
-    (let [{:keys [env worker fixtures]}
-          (tu/prepare-for-test-merge-worker-config tu/defaults
-                                                   {:logger tu/test-logger
-                                                    :log-atom log-atom
-                                                    :exit-on-complete? true
-                                                    :log-ch log-ch
-
-                                                    ;; :max-attempts 25
-                                                    ;; :max-failed-reserve-count 10
-                                                    ;; :delete-failed-jobs? false
-                                                    ;; :on-reserve-fail :stop ;or :throw
-                                                    :poll-interval 1 ;sleep in seconds between batch jobs
-                                                    ;; :poll-batch-size 100 ;how many jobs to process for every poll
-                                                    ;; :reschedule-at (fn [some-time attempts]
-                                                    ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
-
-                                                    ;; ;;Job selection:
-                                                    ;; :min-priority nil
-                                                    ;; :max-priority nil
-                                                    ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
-                                                    }
-                                                   [{:priority nil
-                                                     :attempts 0
-                                                     :handler nil
-                                                     :last-error nil
-                                                     :run-at now
-                                                     :locked-at nil
-                                                     :failed-at nil
-                                                     :locked-by nil
-                                                     :queue nil}])]
-      (def tworker worker)
-      (def tfixtures fixtures)
-      (def tenv env)
-      ))
 
 
-  (do
+;; (deftest mytest
+;;   (testing "test one"
+;;     (is (= 1 2)))
+;;   (testing "test two"
+;;     (is (= 2 3))))
 
-    (let [{:keys [worker-status]} tenv]
-      (add-watch worker-status :status (fn [_ _ _ status]
-                                         (if (= status :stopped)
-                                           (put! log-ch :stop))
-                                         )))
-    (reset! log-atom [])
-    (def stop-worker worker/stop-worker)
-    (def timeout-channel  (async/timeout 10000))
+(let [{:keys [env fixtures worker <!!-status log-atom]}
+      (setup-worker-test
+       {:worker-config  {:exit-on-complete? true
+                         :poll-interval 1 ;sleep in seconds between batch jobs
+                         ;; :max-attempts 25
+                         ;; :max-failed-reserve-count 10
+                         ;; :delete-failed-jobs? false
+                         ;; :on-reserve-fail :stop ;or :throw
+                         ;; :poll-batch-size 100 ;how many jobs to process for every poll
+                         ;; :reschedule-at (fn [some-time attempts]
+                         ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
+                         ;; ;;Job selection:
+                         ;; :min-priority nil
+                         ;; :max-priority nil
+                         ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
+                         }
 
+        :job-records []})]
 
-    (worker/start tworker)
+  (with-redefs [dj-consumer.util/exception-str (fn [e]
+                                                 (str "Exception: " (.getMessage e)))]
+    (worker/start worker)
 
-    (loop [counter 0]
-      (let [{:keys [job text level] :as result}
-            (async/alt!!
-              log-ch ([v _] v)
-              timeout-channel :timeout)]
-        (if-not (or (= result :stop)
-                    (= result :timeout)
-                    ;; (str/contains? text "Exiting")
-                    (> counter 10))
-          (recur (inc counter))))))
+    (loop []
+      (let [status (<!!-status)]
+        (if-not (contains? #{:stopped :timeout :done} status)
+          (recur)
+          (info "Worker status: " status)))))
 
+  (pprint (deref methods-called))
   (pprint (deref log-atom))
-  (pprint (tu/job-table-data tenv))
-  )
+  (pprint (tu/job-table-data env)))
 
-
-
-
-
-
-;; (deftest run-job-batch
-
-;;   )
-
-;; (deftest stop-worker)
-
-
-;; (deftest make-worker)
 
 ;; (def t1
 ;;   (time/date-time 10 1 1))
