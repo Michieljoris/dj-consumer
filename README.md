@@ -24,12 +24,12 @@ Make a worker:
 
 ```
   (let [worker (w/make-worker{:worker-id :sample-worker
-                            :sql-log? true
-                            :db-config {:user "root"
-                                        :password ""
-                                        :url "//localhost:3306/"
-                                        :db-name "chin_minimal"
-                                        }})]
+                              :sql-log? true
+                              :db-config {:user "root"
+                                          :password ""
+                                          :url "//localhost:3306/"
+                                          :db-name "chin_minimal"
+                                          }})]
     (w/start worker)
     )
 ```
@@ -61,9 +61,10 @@ dispatches on this :name key.
 
 A job also comes with a :timed-out? key. This atom becomes true when job times
 out. All lifecycle methods of a job get called regardless, take appropriate
-action in each.If your job is sleeping or parked (waiting for channel input)
-check the atom before continuing. Timed out jobs are rescheduled, so make sure
-the job is idempotent or roll back any changes if needed.
+action in each. If your job is sleeping or parked (waiting for channel input),
+or doing other time consuming work check the atom before continuing. Timed out
+jobs are rescheduled, so make sure the job is idempotent or roll back any
+changes if needed.
 
 All job multimethods are expected to be synchronous. If you need to do async
 work, use core.async, or futures, delays and promises. If an error occurs throw
@@ -84,6 +85,10 @@ Besides being able to start a repl in this repo, if you start your (boot) projec
 
 any edits in dj-consumer source will compiled, installed and checked out again
 in your project.
+
+### Test
+
+    boot test
 
 ### TODO
 

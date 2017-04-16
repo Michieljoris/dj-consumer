@@ -78,11 +78,13 @@
       (job/invoke-hook job/finally job))))
 
 (defn invoke-job-with-timeout
-    "This runs the job's lifecycle methods in a thread and blocks till either job
-  has completed or timeout expires, whichever comes first. If timeout occurs
-  first, job is not actually stopped and will still run its course. However
-  stop? key on job is an atom and will be set to true. Will throw if timeout
-  occurs, or if job throws exception."
+    "This runs the job's lifecycle methods in a thread and blocks till
+  either job has completed or timeout expires, whichever comes first.
+  If timeout occurs first, job is not actually stopped and will still
+  run its course. Stopping threads is possible, but deprecated in the
+  jvm, for reasons of safety, so we're not doing it. We expect a job
+  to behave and end at one time..This fn will throw if timeout occurs,
+  or if job throws exception, otherwise will return nil."
   [{:keys [max-run-time] :as job}]
   (let [timeout-channel (async/timeout max-run-time)
         job-channel (async/thread (try
@@ -194,7 +196,7 @@
 (defn run-job-batch
   "Run a number of jobs in one batch, consecutively. Return map of
   success and fail count. We're running in a thread, so we check
-  worker status and stop processing the batch if worker status in
+  worker status and stop processing the batch if worker status is
   not :running"
   [{:keys [exit-on-complete? job-batch-size worker-status logger] :as env}]
   (loop [result-count {:success 0 :fail 0}

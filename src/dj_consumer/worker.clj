@@ -1,27 +1,15 @@
 (ns dj-consumer.worker
-  (:require
-   [clojure.core.async :as async]
-   [dj-consumer.database.core :as db]
-   [dj-consumer.database.connection :as db-conn]
-   [dj-consumer.reserve-and-run :as rr]
-   [dj-consumer.util :as u]
-   [dj-consumer.job :as job]
-   [dj-consumer.humanize :as humanize]
-
-   [clj-time.core :as time]
-   [clj-time.format :as time-format]
-   [clj-time.coerce :as time-coerce]
-
-   ;; String manipulation
-   [cuerdas.core :as str]
-
-   ;; logging
-   [taoensso.timbre :as timbre
-    :refer (log  trace  debug  info  warn  error  fatal  report color-str
-                 logf tracef debugf infof warnf errorf fatalf reportf
-                 spy get-env log-env)]
-   [clojure.pprint :refer (pprint)]
-   [jansi-clj.core :refer :all]))
+  (:require [clj-time.core :as time]
+            [clojure.core.async :as async]
+            [clojure.pprint :refer [pprint]]
+            [cuerdas.core :as str]
+            [dj-consumer
+             [reserve-and-run :as rr]
+             [util :as u]]
+            [dj-consumer.database
+             [connection :as db-conn]
+             [core :as db]]
+            [taoensso.timbre :as timbre :refer [info]]))
 
 ;;TODO: last-error set it properly on job
 
@@ -60,11 +48,6 @@
   "Set worker status to :stopped"
   [{:keys [worker-status] :as env}]
   (reset! worker-status :stopped))
-
-(let [{:keys [a b] :as result} false]
-  (info a b result (+ a b))
-  )
-
 
 (defn start-worker
   "Start a async thread and loops till worker status changes to not running. In

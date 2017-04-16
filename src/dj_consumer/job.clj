@@ -16,7 +16,7 @@
 ;;Called when job is reserved.
 (defmulti config
   "Return a map with overrides and extra options for the job Extra
-  options are :max-run-time :max-attempts, destroy-failed-job"
+  options are :max-run-time :max-attempts, delete-if-failed?"
   dispatch)
 
 ;;Start job lifecycle (in order)
