@@ -29,9 +29,9 @@
 (defn failed
   "Calls job fail hook, and then sets failed-at column on job record.
   Deletes record instead if job or env is configured accordingly"
-  [{:keys [table logger delete-failed-jobs?] :as env} {:keys [id delete-if-failed? fail-reason] :as job}]
+  [{:keys [table logger delete-failed-jobs?] :as env} {:keys [id delete-if-failed? fail-reason attempts] :as job}]
   (try
-    (job/invoke-hook job/failed job)
+    (job/invoke-hook :failed job)
     (catch Exception e
       (logger env job :error
               (str "Exception when running fail callback:\n" (u/exception-str e))))
@@ -49,7 +49,8 @@
             (db/sql env :update-record (db/make-query-params env
                                                              {:table table
                                                               :where [:id := id]
-                                                              :updates {:failed-at (u/sql-time (u/now))}}))
+                                                              :updates {:failed-at (u/sql-time (u/now))
+                                                                        :attempts attempts}}))
             (logger env job :error (str "MARKED failed because of " fail-reason))))))))
 
 (defn reschedule
@@ -70,12 +71,12 @@
   "Tries to run actual job"
   [job]
   (try
-    (job/invoke-hook job/run job)
+    (job/invoke-hook :run job)
     (catch Exception e
-      (job/invoke-hook job/exception job)
+      (job/invoke-hook :exception job)
       (throw e))
     (finally
-      (job/invoke-hook job/finally job))))
+      (job/invoke-hook :finally job))))
 
 (defn invoke-job-with-timeout
     "This runs the job's lifecycle methods in a thread and blocks till
@@ -157,13 +158,13 @@
                                                               [:failed-at :is :null]]]})
             ;;Retrieve locked record
             job (first (db/sql env :get-cols-from-table query-params))
-            job-config (job/invoke-hook job/config job)
             job (merge job (try (u/parse-ruby-yaml (:handler job))
                                 (catch Exception e
                                   (throw (ex-info "Exception thrown parsing job yaml"
                                                   {:e e
                                                    :job job
-                                                   :yaml-exception? true})))))]
+                                                   :yaml-exception? true})))))
+            job-config (job/invoke-hook :config job)]
         (merge job job-config {:timed-out? (atom false)
                                :max-run-time (min max-run-time (or (:max-run-time job-config)
                                                                    max-run-time))})))))
@@ -183,12 +184,15 @@
                              :fail-reason "yaml parse error"
                              )) ;fail job immediately, yaml is no good.
           (do ;Panic! Reserving job went wrong!!!
+            (timbre/info e)
              (logger env :error (str "Error while trying to reserve a job: \n" (u/exception-str e)))
             (let [fail-count (swap! failed-reserved-count inc)]
-              (when (> fail-count max-failed-reserve-count)
+              (when (>= fail-count max-failed-reserve-count)
                 (condp = on-reserve-fail
-                  :stop (reset! worker-status :crashed)
-                  :throw (throw (ex-info "Failed to reserve jobs"
+                  :stop (do
+                          (logger env :error (str "Too many reserve failures. Worker stopped"))
+                          (reset! worker-status :crashed))
+                  :throw (throw (ex-info "Too many reserve failures."
                                          {:last-exception e
                                           :failed-reserved-count @failed-reserved-count}))))))))
       :fail)))

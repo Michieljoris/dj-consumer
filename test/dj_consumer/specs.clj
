@@ -40,23 +40,7 @@
 (s/explain-str ::job-record {:id 1 :priority 0 :attempts 0 :handler nil :last-error nil
                              :run-at nil :locked-at nil :failed-at nil :locked-by nil :queue nil})
 
-(defn run-worker [worker-config job-records methods-called]
-  (let [{:keys [env fixtures worker <!!-status log-atom]}
-        (tu/setup-worker-test
-         {:worker-config (merge worker-config {:exit-on-complete? true})
-          :job-records [{}]})] ;this'll insert a default job
-    (with-redefs [dj-consumer.util/exception-str
-                  (fn [e] (str "Exception: " (.getMessage e)))]
-      (worker/start worker)
-      (loop []
-        (let [status (<!!-status)]
-          (if-not (contains? #{:stopped :timeout :done} status)
-            (recur)
-            {:log-atom @log-atom
-             :methods-called methods-called
-             :status status
-             :job-table-data (tu/job-table-data env)}
-            ))))))
+
 
 (pprint (run-worker nil [] :methods-called))
 

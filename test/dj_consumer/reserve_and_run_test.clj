@@ -10,7 +10,13 @@
              [worker :as worker]]
             [dj-consumer.database
              [connection :as db-conn]
-             [core :as db]]))
+             [core :as db]]
+            
+            [taoensso.timbre :as timbre
+             :refer (log  trace  debug  info  warn fatal  report color-str
+                          logf tracef debugf infof warnf errorf fatalf reportf
+                          spy get-env log-env)]
+            ))
 
 ;;TODO
 (deftest default-logger
@@ -34,23 +40,24 @@
        {:locked-by nil, :locked-at nil, :id 2}
        {:locked-by "sample-worker2", :locked-at (u/sql-time some-time) :id 3}]))))
 
-(defmethod job/failed :test-failed [_ {:keys [invoked?] :as job}]
+(defmethod job/failed :test-failed [{:keys [invoked?] :as job}]
+  (timbre/info "failed!!!!")
   (reset! invoked? true))
 
-(defmethod job/failed :test-thrown [_ {:keys [invoked? name]}]
+(defmethod job/failed :test-thrown [{:keys [invoked? name]}]
   (reset! invoked? true)
   (throw (ex-info "job has thrown " {:job-name name})))
 
 (deftest failed
   (let [{:keys [env worker fixtures]}
-        (tu/prepare-for-test tu/defaults [{:priority 0 :failed-at nil :attempts 1}
-                                    {:priority 1 :failed-at nil}
-                                    ])
-        job {:name :test-failed :id 1 :invoked? (atom false)}
+        (tu/prepare-for-test tu/defaults [{:priority 0 :failed-at nil :attempts 0}
+                                          {:priority 1 :failed-at nil}
+                                          ])
+        job {:name :test-failed :id 1 :attempts 1 :invoked? (atom false)}
         now (u/now)]
     (with-redefs [dj-consumer.util/now (constantly now)]
       (tn/failed env job)
-      (is  @(:invoked? job) "job is invoked")
+      (is  @(:invoked? job) "job failed hook is invoked")
       (is (=
            (tu/job-table-data env)
            [{:attempts 1,
@@ -58,7 +65,7 @@
              :priority 0,
              :id 1}
             {:attempts 0, :failed-at nil, :priority 1, :id 2}])
-          "job record's failed-at is set properly")))
+          "job record's failed-at is set properly;; ")))
 
   (let [log-atom (atom [])
         {:keys [env worker fixtures]}
@@ -69,11 +76,11 @@
                                             :log-atom log-atom
                                             :logger tu/test-logger})
                                     ))
-                          [{:priority 0 :failed-at nil :attempts 1}
+                          [{:priority 0 :failed-at nil :attempts 0}
                            {:priority 1 :failed-at nil}
                            {}])
         job1 {:name :job1 :id 1 :fail-reason "foo"}
-        job2 {:name :job2 :id 2 :delete-if-failed? false :fail-reason "bar"}
+        job2 {:name :job2 :id 2 :delete-if-failed? false :attempts 2 :fail-reason "bar"}
         job3 {:name :test-thrown :id 3 :invoked? (atom false)}
         now (u/now)]
     (with-redefs [dj-consumer.util/now (constantly now)
@@ -84,20 +91,12 @@
       (is  @(:invoked? job3) "job is invoked")
       (is (=
            (tu/job-table-data env)
-           [{:attempts 0, :failed-at (u/sql-time now), :priority 1, :id 2}])
+           [{:attempts 2, :failed-at (u/sql-time now), :priority 1, :id 2}])
           "job record's is removed when failed when worker is configured to do so, but job can override this. If jobs' fail callback throws exception, job is still removed, but this is logged")
-      (is (= @log-atom [{:level :error,
-                         :text
-                         "[sample-worker] Job :job1 (id=1) REMOVED permanently because of foo"}
-                        {:level :error,
-                         :text
-                         "[sample-worker] Job :job2 (id=2) MARKED failed because of bar"}
-                        {:level :error,
-                         :text
-                         "[sample-worker] Job :test-thrown (id=3) Exception when running fail callback:\nsome-exception-str"}
-                        {:level :error,
-                         :text
-                         "[sample-worker] Job :test-thrown (id=3) REMOVED permanently because of "}])
+      (is (= @log-atom [":error-[sample-worker] Job :job1 (id=1) REMOVED permanently because of foo"
+                        ":error-[sample-worker] Job :job2 (id=2) MARKED failed because of bar"
+                        ":error-[sample-worker] Job :test-thrown (id=3) Exception when running fail callback:\nsome-exception-str"
+                        ":error-[sample-worker] Job :test-thrown (id=3) REMOVED permanently because of "])
           "fails are logged"))))
 
 (deftest reschedule
@@ -124,21 +123,20 @@
              :locked-at nil,
              :id 1}])
           "Attempts and run-at cols are set. ")
-      (is (= @log-atom [{:level :info,
-                         :text
-                         (str "[sample-worker] Job :job1 (id=1) Rescheduled at " (u/time->str now))}])
+      (is (= @log-atom [(str ":info-[sample-worker] Job :job1 (id=1) Rescheduled at "
+                             (u/time->str now))])
           "reschedule is logged"))))
 
-(defmethod job/run :test-job [_ {:keys [invoked? throw-run? sleep-run name]}]
+(defmethod job/run :test-job [{:keys [invoked? throw-run? sleep-run name]}]
   (swap! invoked? conj :run)
   (if sleep-run (Thread/sleep sleep-run))
   (if throw-run? (throw (ex-info "run hook has thrown" {:job-name name}))))
 
-(defmethod job/exception :test-job [_ {:keys [invoked? throw-exception? name]}]
+(defmethod job/exception :test-job [{:keys [invoked? throw-exception? name]}]
   (swap! invoked? conj :exception)
   (if throw-exception? (throw (ex-info "exception hook has thrown" {:job-name name}))))
 
-(defmethod job/finally :test-job [_ {:keys [invoked? throw-finally? name sleep-finally]}]
+(defmethod job/finally :test-job [{:keys [invoked? throw-finally? name sleep-finally]}]
   (swap! invoked? conj :finally)
   (if sleep-finally (Thread/sleep sleep-finally))
   (if throw-finally? (throw (ex-info "finally hook has thrown" {:job-name name}))))
@@ -266,9 +264,7 @@
                   ]
       (tn/handle-run-exception env job1 some-exception)
       (is (= @log-atom
-             [{:level :error,
-               :text
-               "[sample-worker] Job :job1 (id=1) FAILED to run. Failed 3 attempts. Last exception:\njob1 exception"}])
+             [":error-[sample-worker] Job :job1 (id=1) FAILED to run. Failed 3 attempts. Last exception:\njob1 exception"])
           "Too many attempts as set in env. Exception is logged")
       (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 3,
                                       :exception some-exception,
@@ -279,9 +275,8 @@
       (reset! handle-called {})
       (tn/handle-run-exception env (assoc job1 :attempts 1 :max-attempts 2) some-exception)
       (is (= @log-atom
-             [{:level :error,
-               :text
-               "[sample-worker] Job :job1 (id=1) FAILED to run. Failed 2 attempts. Last exception:\njob1 exception"}])
+             [":error-[sample-worker] Job :job1 (id=1) FAILED to run. Failed 2 attempts. Last exception:\njob1 exception"]
+             )
           "Too many attempts as set in job. Exception is logged")
       (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 2, :max-attempts 2
                                       :exception some-exception,
@@ -292,9 +287,7 @@
       (reset! handle-called {})
       (tn/handle-run-exception env (assoc job1 :attempts 1) fail-exception)
       (is (= @log-atom
-             [{:level :error,
-               :text
-               "[sample-worker] Job :job1 (id=1) FAILED to run. Job requested fail Last exception:\njob1 exception"}])
+             [":error-[sample-worker] Job :job1 (id=1) FAILED to run. Job requested fail Last exception:\njob1 exception"])
           "Job requests fail by setting :failed? true to context of exception")
       (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 2
                                       :exception fail-exception
@@ -308,9 +301,7 @@
                                           :timed-out? timed-out?)
                                timeout-exception)
       (is (= @log-atom
-             [{:level :error,
-               :text
-               "[sample-worker] Job :job1 (id=1) FAILED to run. Failed 3 attempts. Last exception:\njob1 exception"}])
+             [":error-[sample-worker] Job :job1 (id=1) FAILED to run. Failed 3 attempts. Last exception:\njob1 exception"])
           "timeout exception")
       (is (= @handle-called {:failed {:name :job1, :id 1, :attempts 3
                                       :timed-out? timed-out?
@@ -326,10 +317,8 @@
                                           :attempts 1
                                           :timed-out? timed-out?)
                                some-exception)
-      (is (= @log-atom [{:level :error,
-                         :text
-                         "[sample-worker] Job :job1 (id=1) FAILED to run.  Last exception:\njob1 exception"}]
-             )
+      (is (= @log-atom
+             [":error-[sample-worker] Job :job1 (id=1) FAILED to run.  Last exception:\njob1 exception"])
           "some exception is logged properly")
       (is (= @handle-called {:reschedule
                              {:name :job1,
@@ -375,9 +364,9 @@
           "all fixtures jobs are in job table")
       (is (= (tn/run env job1) :success)
           "No exception thrown in job, returns :true")
-      (is (= @log-atom [{:level :info, :text "[sample-worker] Job :job1 (id=1) RUNNING"}
-                        {:level :info,
-                         :text "[sample-worker] Job :job1 (id=1) COMPLETED after 1ms"}])
+      (is (= @log-atom
+             [":info-[sample-worker] Job :job1 (id=1) RUNNING"
+              ":info-[sample-worker] Job :job1 (id=1) COMPLETED after 1ms"])
           "job start run and completed are logged")
       (is (= @fn-called {:invoke-job-with-timeout {:name :job1, :id 1, :attempts 2}})
           "invoke-job-with-timeout is invoked with job")
@@ -389,7 +378,7 @@
       (reset! fn-called {})
       (is (= (tn/run env (assoc job2 :priority 1)) :fail)
           "Exception is thrown in job run, result is :fail")
-      (is (= @log-atom [{:level :info, :text "[sample-worker] Job :job2 (id=2) RUNNING"}])
+      (is (= @log-atom [":info-[sample-worker] Job :job2 (id=2) RUNNING"])
           "Only job RUNNING is logged")
       (is (= @fn-called {:invoke-job-with-timeout {:name :job2, :id 2, :attempts 2, :priority 1}
                          :handle-run-exception {:name :job2 :id 2, :attempts 2 :priority 1}
@@ -734,7 +723,7 @@ invitation_id: 882\nfoo: bar"
              :worker-status (atom :running)
              :log-atom log-atom
              :on-reserve-fail :stop
-             :max-failed-reserve-count 1
+             :max-failed-reserve-count 2
              :failed-reserved-count failed-reserved-count}]
     (with-redefs [dj-consumer.reserve-and-run/reserve-job (fn [{:keys [throw-reserve] :as env}]
                                                             (swap! fn-called assoc :reserve-job true)
@@ -781,9 +770,10 @@ invitation_id: 882\nfoo: bar"
           "reserving job throws an exception, our fn returns a :fail")
       (is (= @fn-called {:reserve-job true,})
           "reserve-job is called only ")
-      (is (= @log-atom [{:level :error,
-                         :text
-                         "[some-worker] Error while trying to reserve a job: \nsome exception string"}])
+      (is (= @(:worker-status env) :running)
+          "worker status is now crashed")
+      (is (= @log-atom
+             [":error-[some-worker] Error while trying to reserve a job: \nsome exception string"])
           "reserve error is logged")
       (is (= @failed-reserved-count 1)
           "keeping track of number of reserve errors")
@@ -800,16 +790,16 @@ invitation_id: 882\nfoo: bar"
           "reserve-job is called")
       (is (= @(:worker-status env) :crashed)
           "worker status is now crashed")
-      (is (= @log-atom [{:level :error,
-                         :text
-                         "[some-worker] Error while trying to reserve a job: \nsome exception string"}])
+      (is (= @log-atom
+             [":error-[some-worker] Error while trying to reserve a job: \nsome exception string"
+              ":error-[some-worker] Too many reserve failures. Worker stopped"])
           "reserve error is logged")
       (is (= @failed-reserved-count 2)
           "keeping track of number of reserve errors")
 
       (reset! fn-called {})
       (reset! log-atom [])
-      (is (thrown-with-msg? Exception #"Failed to reserve jobs"
+      (is (thrown-with-msg? Exception #"Too many reserve failures"
                             (tn/reserve-and-run-one-job (assoc env
                                                                :throw-reserve some-exception
                                                                :on-reserve-fail :throw

@@ -17,7 +17,8 @@
    ))
 
 (deftest parse-ruby-yaml
-  (is (= (tn/parse-ruby-yaml "--- !ruby/struct:InvitationExpirationReminderJob
+  (is (= (tn/parse-ruby-yaml
+          "--- !ruby/struct:InvitationExpirationReminderJob
 invitation_id: 882\nfoo: bar")
          {:name :invitation-expiration-reminder-job,
           :payload {:invitation_id 882,
@@ -50,7 +51,7 @@ invitation_id: 882\nfoo: bar")
         :payload {:object nil,
                   :method_name "foo",
                   :raw_attributes {:id 1, :nested {:p1 2}}}})
-      "Ignore ruby anotations, extract ruby object name and method and set on :name key")
+      "Ignore ruby anotations, extract ruby object name and method and set on :name key and set payload")
 
   (is (thrown? Exception (tn/parse-ruby-yaml "foo: bar\nbaz foo"))
       "Incorrect yaml throws exception")

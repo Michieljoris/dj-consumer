@@ -7,11 +7,13 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]))
 
+;; (doseq [mm ['config 'run 'exception 'finally 'failed]] (ns-unmap *ns* mm))
+
 ;; The various lifecycle multimethods for a job are dispatched by name of the
 ;; job. Every job has a :timed-out? key. This is an atom that's set to true if
 ;; job times out. The various methods of job get called, regardless of the value
 ;; of timed-out?. Take appropriate action in each method.
-(defn dispatch [k job] k)
+(defn dispatch [job] (:name job))
 
 ;;Called when job is reserved.
 (defmulti config
@@ -38,21 +40,43 @@
   or timing out. This hook is called immediately if the exception
   thrown is an ex-info with context set to {:failed? true}" dispatch)
 
-(defmethod config :default [_ job])
-(defmethod run :default [k job] (throw (ex-info (str "Implementation is missing for job " k)
+(defmethod config :default [job])
+(defmethod run :default [job] (throw (ex-info (str "Implementation is missing for job " (:name job))
                                                 {:failed? true})))
-(defmethod exception :default [_ job])
-(defmethod finally :default [_ job])
-(defmethod failed :default [_ job])
+(defmethod exception :default [job])
+(defmethod finally :default [job])
+(defmethod failed :default [job])
 
 (defn invoke-hook
-  "Calls hook on job with job and any extra args"
-  [method job & args]
-  (apply method (into [(:name job) job] args)))
+  "Calls hook (as keyword) on job, resolving hook to fn in this
+  namespace"
+  [hook job]
+  (let [hook (resolve (symbol (str "dj-consumer.job/" (name hook))))]
+    (hook job)))
+
+(invoke-hook :config {:name "bla"})
 
 
-;; (doseq [mm ['config 'after 'fail 'error 'run]] (ns-unmap *ns* mm))
-;; (defn invoke-hook [method job & args]
-;;   (apply method (into [(:name job) job] args)))
 
-;; (invoke-hook run {:name "foo"} :foo)
+
+
+;; (defn invoke-hook
+;;   "Calls hook on job with job and any extra args"
+;;   [method job]
+;;   (method job))
+
+;; (invoke-hook failed {:name :test-failed})
+;; (failed {:name :test-thrown})
+
+
+;;   (defn invoke-hook [method job & args]
+;;     (apply method (into [(:name job) job] args)))
+
+;; (defmulti job-hook (fn [hook job] [hook (:name job)]))
+;; (defmethod job-hook [:config :bar] [hook job] [hook job])
+;; (defmethod job-hook [:run:bar] [hook job] [hook job])
+#_(job-hook :failed {:name :bar})
+
+;; (defmethod job [:send-email :run]
+
+;;   )

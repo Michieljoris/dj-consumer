@@ -21,6 +21,17 @@
    [clojure.pprint :refer (pprint)]
    [jansi-clj.core :refer :all]
    ))
+
+;; (info
+;;  (yaml/generate-string
+;;   [{:name "John Smith", :age 33 :foo {:bar {:baz 2}}}
+;;    ]))
+;; - name: John Smith
+;;   age: 33
+;;   foo:
+;;     bar: {baz: 2}
+
+
 (defn parse-ex-info [e]
   {:msg (.getMessage e)
    :context (ex-data e)

@@ -6,6 +6,7 @@
    [dj-consumer.database.connection :as db-conn]
    [dj-consumer.database.core :as db]
    [dj-consumer.worker :as worker]
+   [yaml.core :as yaml]
 
    ;; String manipulation
    [cuerdas.core :as str]
@@ -153,14 +154,25 @@
    (let [queue-str (if queue (str ", queue=" queue))
          job-str (if job (str "Job " name " (id=" id queue-str ") " ))
          text (str "[" worker-id "] " job-str text)]
-     (swap! log-atom #(conj % {:level level :text text})))))
+     (swap! log-atom #(conj % (str level "-" text))))))
 
-(def u-now (u/now))
+;; (def u-now (u/now))
+;; (pprint u-now)
+(def u-now (time/date-time 2017 1 1 13 00 0))
+;; (pprint u-now)
 (def now (u/sql-time u-now))
 (def a-minute-ago (time/minus now (time/minutes 1)))
 (def two-minutes-ago (time/minus now (time/minutes 2)))
 (def three-minutes-ago (time/minus now (time/minutes 3)))
 (def five-hours-ago (time/minus now (time/hours 5)))
+
+(defn mock-runtime
+  "Evaluates expr and returns a map with the time it took in ms
+  under :runtime and the result of the expression under :result "
+  [f  & args]
+  (let [result (apply f args)]
+    {:runtime 10
+     :result result}))
 
 (defn <!!-status-change
   ([status-change-ch] (<!!-status-change status-change-ch (* 10 1000)))
@@ -179,9 +191,9 @@
         log-atom (atom [])
         {:keys [env worker fixtures]}
         (prepare-for-test-merge-worker-config defaults
-                                                 (merge worker-config
-                                                        {:logger test-logger
-                                                         :log-atom log-atom})
+                                              (merge {:logger test-logger}
+                                                     worker-config
+                                                     {:log-atom log-atom})
                                                  job-records)]
 
     (watch-worker-status (:worker-status env) status-change-ch)
@@ -192,7 +204,33 @@
      :<!!-status (partial <!!-status-change status-change-ch)
      :log-atom log-atom}))
 
+(defn run-worker-once [worker-config job-records methods-called]
+  (reset! methods-called [])
+  (let [{:keys [env fixtures worker <!!-status log-atom]}
+        (setup-worker-test
+         {:worker-config (merge worker-config {:exit-on-complete? true})
+          :job-records job-records})] ;this'll insert a default job
+    (with-redefs [dj-consumer.util/exception-str
+                  (fn [e] (str "Exception: " (.getMessage e)))]
+      (worker/start worker)
+      (loop []
+        (let [status (<!!-status)]
+          (if-not (contains? #{:stopped :timeout :done :crashed} status)
+            (recur)
+            {:log-atom @log-atom
+             :methods-called @methods-called
+             :status status
+             :fixtures fixtures
+             :job-table-data (job-table-data env)}))))))
+
+(defn make-handler-yaml [{:keys [job-name payload]}]
+  (str "--- !ruby/struct:" (str/strip-prefix (str job-name) ":") "\n"
+       (yaml/generate-string payload)))
+;; (info (make-handler-yaml :some-name {:foo {:bar {:baz 3}}}))
+
+
 ;; (defn make-db-fixture
+
 ;;   [{:keys [mysql-db-conn db-conn db-config] :as env} fixtures]
 ;;   (fn [test-fn]
 ;;     (setup-test-db mysql-db-conn db-conn (:db-name db-config) fixtures)
