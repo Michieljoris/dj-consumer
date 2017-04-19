@@ -292,8 +292,7 @@
    ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
    ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
    ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Too many reserve failures. Worker stopped"
-   ":info-[sample-worker] 10 jobs processed at 1000.00 jobs per second. 10 failed."])
+   ":error-[sample-worker] Too many reserve failures. Worker stopped"])
             "Reserve fails logged")
         (is (= job-table-data [{:locked-by "sample-worker",
                                 :attempts 0,

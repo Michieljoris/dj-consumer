@@ -59,27 +59,31 @@
   ;;If jvm crashed or was halted a job might have been locked still, this worker
   ;;would not pick up the job till at least max-run-time had expired
   (rr/clear-locks env)
+  (reset! worker-status :running)
   (async/go-loop []
-    (reset! worker-status :running)
-    (let [{:keys [runtime]
-           {:keys [success fail]} :result} (u/runtime rr/run-job-batch env)
-          total-runs (+ success fail)
-          jobs-per-second (/ total-runs (/ runtime 1000.0))
-          exit-on-complete? (and (zero? total-runs) exit-on-complete?)]
-      (if (pos? total-runs)
-        (logger env :info (str total-runs " jobs processed at "
-                               (format "%.2f" jobs-per-second)
-                               " jobs per second. " fail " failed.")))
-      (when (= @worker-status :running)
-        (if exit-on-complete?
-          (do
-            (logger env :info "No more jobs available. Exiting")
-            (reset! worker-status :done))
-          (do
-            (when (zero? total-runs)
-              (reset! worker-status :sleeping)
-              (Thread/sleep poll-interval))
-            (recur)))))))
+    (if (= @worker-status :running)
+      (let [{:keys [runtime]
+             {:keys [success fail]} :result} (u/runtime rr/run-job-batch env)
+            total-runs (+ success fail)
+            jobs-per-second (/ total-runs (/ runtime 1000.0))
+            exit-on-complete? (and (zero? total-runs) exit-on-complete?)]
+        (if (pos? total-runs)
+          (logger env :info (str total-runs " jobs processed at "
+                                 (format "%.2f" jobs-per-second)
+                                 " jobs per second. " fail " failed.")))
+        (when (= @worker-status :running)
+          (if exit-on-complete?
+            (do
+              (logger env :info "No more jobs available. Exiting")
+              (reset! worker-status :done))
+            (do
+              (when (zero? total-runs)
+                (reset! worker-status :sleeping)
+                (Thread/sleep poll-interval)
+                (if (= @worker-status :sleeping)
+                  (reset! worker-status :running)))
+              (recur)))))
+      (logger env :info "Stopped"))))
 
 (defprotocol IWorker
   (start [this])
@@ -93,17 +97,16 @@
     (let [{:keys [logger log-atom]} env]
       (logger env :info "Starting")
       (let [{:keys [worker-status]} env]
-        (if (not  (contains? #{:new :stopped} @worker-status))
+        (if (contains? #{:running :sleeping} @worker-status)
           (logger env :info "Worker was already running")
           (start-worker env)
           ))))
   (stop [this]
     (let [{:keys [worker-status logger]} env]
       (logger env :info "Stopping")
-      (if (contains? #{:new :stopped} @worker-status)
+      (if (contains? #{:stopped :crashed} @worker-status)
         (logger env :info "Worker was already not running")
-        (stop-worker env)
-        )))
+        (stop-worker env))))
   (status [this] @(:worker-status env))
   (env [this] env))
 
