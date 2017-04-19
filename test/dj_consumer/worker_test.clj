@@ -420,47 +420,47 @@
                                 :id 1}])
             "rescheduled")))))
 
-(let [{:keys [env fixtures worker <!!-status log-atom]}
+;; (let [{:keys [env fixtures worker <!!-status log-atom]}
 
 
-      (tu/setup-worker-test
-       {:worker-config  {:exit-on-complete? true
-                         ;; :poll-interval 1 ;sleep in seconds between batch jobs
-                         ;; :max-attempts 25
-                         ;; :max-failed-reserve-count 10
-                         ;; :delete-failed-jobs? false
-                         ;; :on-reserve-fail :stop ;or :throw
-                         ;; :poll-batch-size 100 ;how many jobs to process for every poll
-                         ;; :reschedule-at (fn [some-time attempts]
-                         ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
-                         ;; ;;Job selection:
-                         ;; :min-priority nil
-                         ;; :max-priority nil
-                         ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
-                         }
+;;       (tu/setup-worker-test
+;;        {:worker-config  {:exit-on-complete? true
+;;                          ;; :poll-interval 1 ;sleep in seconds between batch jobs
+;;                          ;; :max-attempts 25
+;;                          ;; :max-failed-reserve-count 10
+;;                          ;; :delete-failed-jobs? false
+;;                          ;; :on-reserve-fail :stop ;or :throw
+;;                          ;; :poll-batch-size 100 ;how many jobs to process for every poll
+;;                          ;; :reschedule-at (fn [some-time attempts]
+;;                          ;;                  (time/plus some-time (time/seconds (Math/pow attempts 4))))
+;;                          ;; ;;Job selection:
+;;                          ;; :min-priority nil
+;;                          ;; :max-priority nil
+;;                          ;; :queues nil ;nil is all queues, but nil is also a valid queue, eg [nil "q"]
+;;                          }
 
-        :job-records [{:run-at tu/now :locked-by nil
-                       :locked-at nil :priority 0 :attempts 0
-                       :handler (tu/make-handler-yaml {:job-name :test-job1 :payload {:foo 123}})
-                       :failed-at nil :queue nil}]})]
+;;         :job-records [{:run-at tu/now :locked-by nil
+;;                        :locked-at nil :priority 0 :attempts 0
+;;                        :handler (tu/make-handler-yaml {:job-name :test-job1 :payload {:foo 123}})
+;;                        :failed-at nil :queue nil}]})]
 
-  (with-redefs [dj-consumer.util/now (constantly tu/u-now)
-                dj-consumer.util/runtime  tu/mock-runtime
-                dj-consumer.job/invoke-hook invoke-hook
-                dj-consumer.util/exception-str (fn [e]
-                                                 (str "Exception: " (.getMessage e)))]
-    (reset! methods-called [])
-    (worker/start worker)
+;;   (with-redefs [dj-consumer.util/now (constantly tu/u-now)
+;;                 dj-consumer.util/runtime  tu/mock-runtime
+;;                 dj-consumer.job/invoke-hook invoke-hook
+;;                 dj-consumer.util/exception-str (fn [e]
+;;                                                  (str "Exception: " (.getMessage e)))]
+;;     (reset! methods-called [])
+;;     (worker/start worker)
 
-    (loop []
-      (let [status (<!!-status)]
-        (if-not (contains? #{:stopped :timeout :done} status)
-          (recur)
-          (timbre/info "Worker status: " status)))))
+;;     (loop []
+;;       (let [status (<!!-status)]
+;;         (if-not (contains? #{:stopped :timeout :done} status)
+;;           (recur)
+;;           (timbre/info "Worker status: " status)))))
 
-  (pprint (deref methods-called))
-  (pprint (deref log-atom))
-  (pprint (tu/job-table-data env)))
+;;   (pprint (deref methods-called))
+;;   (pprint (deref log-atom))
+;;   (pprint (tu/job-table-data env)))
 
 
 ;; (def t1

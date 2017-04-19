@@ -1,0 +1,39 @@
+sudo: false
+
+language: java
+
+notifications:
+  slack: 'digitalechecklisten:8h7EGdb2hUNg58QdGRGpsVO0#development'
+
+script:
+  - boot test
+
+before_install:
+
+install:
+  - mkdir -p ~/bin
+  - export PATH=~/bin:$PATH
+  - curl -L https://github.com/boot-clj/boot-bin/releases/download/latest/boot.sh -o ~/bin/boot
+  - chmod +x ~/bin/boot
+
+env:
+  global:
+    - BOOT_CLOJURE_VERSION="1.8.0"
+    - BOOT_JVM_OPTIONS="-Xmx2g"
+    - BOOT_WATCHERS_DISABLE=yes
+
+jdk:
+  - oraclejdk8
+#  Using jdk8 from oracle for now, see this issue for more info
+# https://github.com/travis-ci/travis-ci/issues/3259
+#  - openjdk8
+
+# before_script:
+  # - mysql -e 'create database chinchilla_test;'
+
+cache:
+  directories:
+  - $HOME/.m2
+  - $HOME/.boot/cache/bin
+  - $HOME/.boot/cache/lib
+  - $HOME/bin

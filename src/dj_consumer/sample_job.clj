@@ -21,7 +21,7 @@
 
 
 (defmethod job/run :invitation-expiration-reminder-job [job]
-  (info "Doing job, sleeping 1000 ms")
+  (info "Doing job, sleeping 2000 ms")
   (Thread/sleep 1000)
   (info "Woke up!. Done the job " )
   )
@@ -32,6 +32,9 @@
 
 (defmethod job/run :user/say-hello [job]
   (info "Running user job " )
+  (info "Doing job, sleeping 2000 ms")
+  (Thread/sleep 2000)
+  (info "Woke up!. Done the job " )
   )
 
 (defmethod job/finally :user/say-hello [job]
@@ -68,14 +71,25 @@
          :job-records [{:run-at tu/now :locked-by nil
                         :locked-at nil :priority 0 :attempts 0
                         :handler (tu/make-handler-yaml {:job-name :user/say-hello :payload {:foo 123}})
-                        :failed-at nil :queue nil}]})]
+                        :failed-at nil :queue nil}
+                       {:run-at tu/now :locked-by nil
+                        :locked-at nil :priority 0 :attempts 0
+                        :handler (tu/make-handler-yaml {:job-name :user/say-hello :payload {:foo 123}})
+                        :failed-at nil :queue nil}]})
+       worker2 (worker/make-worker {:exit-on-complete? true
+                                    :db-config (:db-config env)
+                                    :table (:table env)
+                                    :worker-id :worker2})
+       ]
 
    (with-redefs [dj-consumer.util/now (constantly tu/u-now)
-                 ;; dj-consumer.util/runtime  tu/mock-runtime
+                 ; dj-consumer.util/runtime  tu/mock-runtime
                  dj-consumer.util/exception-str (fn [e]
                                                   (str "Exception: " (.getMessage e)))
                  ]
      (worker/start worker)
+
+     (worker/start worker2)
 
      (loop []
        (let [status (<!!-status)]
