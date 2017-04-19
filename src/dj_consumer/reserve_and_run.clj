@@ -112,8 +112,7 @@
                  (cond
                    failed? (str "Job requested fail")
                    too-many-attempts? (str "Failed " attempts " attempts."))
-                 " Last exception:\n" (u/exception-str e)
-                 ))
+                 " Last exception:\n" (u/exception-str e)))
     (if (not (or failed? too-many-attempts?))
       (reschedule env job)
       (failed env (assoc job
