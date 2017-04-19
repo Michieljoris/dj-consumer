@@ -281,18 +281,24 @@
                                {:hook :config, :job-name :test-job-with-all-hooks}
                                {:hook :config, :job-name :test-job-with-all-hooks}])
             "10 failed config hooks")
-        (is (= log-atom [":info-[sample-worker] Starting"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
-   ":error-[sample-worker] Too many reserve failures. Worker stopped"])
+        ;;Taking 12 because after test watcher sees worker-status change
+        ;;to :crashed we continue the test. However a final log msg -might- be
+        ;;added to the log atom because we have a race condition. But these don't affect
+        ;;the test result.
+        (is (= (take 12 log-atom)
+               [":info-[sample-worker] Starting"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
+                ":error-[sample-worker] Too many reserve failures. Worker stopped"
+                ])
             "Reserve fails logged")
         (is (= job-table-data [{:locked-by "sample-worker",
                                 :attempts 0,
@@ -516,6 +522,7 @@
 ;;       (recur)
 ;;       (info "stopped")))
 ;;   )
+
 
 ;; (def s "bla foo Exiting")
 ;; (str/contains? s "Exiting")
