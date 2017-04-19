@@ -517,6 +517,5 @@
 ;;       (info "stopped")))
 ;;   )
 
-
 ;; (def s "bla foo Exiting")
 ;; (str/contains? s "Exiting")
