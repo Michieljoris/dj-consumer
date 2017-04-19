@@ -145,7 +145,7 @@
                 ":info-[sample-worker] Job :unknown-job-name (id=1) RUNNING"
                 ":error-[sample-worker] Job :unknown-job-name (id=1) FAILED to run. Job requested fail Last exception:\nException: Implementation is missing for job :unknown-job-name"
                 ":error-[sample-worker] Job :unknown-job-name (id=1) MARKED failed because of job requested to be failed"
-                ":info-[sample-worker] 1 jobs processed at 100 jobs per second. 1 failed."
+                ":info-[sample-worker] 1 jobs processed at 100.00 jobs per second. 1 failed."
                 ":info-[sample-worker] No more jobs available. Exiting"])
             "Start and exit logged")
         (is (= job-table-data  [{:queue nil,
@@ -177,7 +177,7 @@
         (is (= log-atom [":info-[sample-worker] Starting"
                          ":info-[sample-worker] Job :test-job1 (id=1) RUNNING"
                          ":info-[sample-worker] Job :test-job1 (id=1) COMPLETED after 10ms"
-                         ":info-[sample-worker] 1 jobs processed at 100 jobs per second. 0 failed."
+                         ":info-[sample-worker] 1 jobs processed at 100.00 jobs per second. 0 failed."
                          ":info-[sample-worker] No more jobs available. Exiting"])
             "running and completing of job logged")
         (is (= job-table-data ())
@@ -210,7 +210,7 @@
                          ":info-[sample-worker] Job :non-existant-job (id=3) RUNNING"
                          ":error-[sample-worker] Job :non-existant-job (id=3) FAILED to run. Job requested fail Last exception:\nException: Implementation is missing for job :non-existant-job"
                          ":error-[sample-worker] Job :non-existant-job (id=3) MARKED failed because of job requested to be failed"
-                         ":info-[sample-worker] 3 jobs processed at 300 jobs per second. 2 failed."
+                         ":info-[sample-worker] 3 jobs processed at 300.00 jobs per second. 2 failed."
                          ":info-[sample-worker] No more jobs available. Exiting"])
             "running and completing of jobs logged")
         (is (= job-table-data [{:queue nil,
@@ -252,7 +252,7 @@
         (is (= log-atom [":info-[sample-worker] Starting"
                          ":info-[sample-worker] Job :test-job-with-all-hooks (id=1) RUNNING"
                          ":info-[sample-worker] Job :test-job-with-all-hooks (id=1) COMPLETED after 10ms"
-                         ":info-[sample-worker] 1 jobs processed at 100 jobs per second. 0 failed."
+                         ":info-[sample-worker] 1 jobs processed at 100.00 jobs per second. 0 failed."
                          ":info-[sample-worker] No more jobs available. Exiting"])
             "Running and completing logged")
         (is (= job-table-data [])
@@ -293,7 +293,7 @@
    ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
    ":error-[sample-worker] Error while trying to reserve a job: \nException: job is throwing in config"
    ":error-[sample-worker] Too many reserve failures. Worker stopped"
-   ":info-[sample-worker] 10 jobs processed at 1000 jobs per second. 10 failed."])
+   ":info-[sample-worker] 10 jobs processed at 1000.00 jobs per second. 10 failed."])
             "Reserve fails logged")
         (is (= job-table-data [{:locked-by "sample-worker",
                                 :attempts 0,
@@ -346,7 +346,7 @@
         (is (= log-atom [":info-[sample-worker] Starting"
                          ":info-[sample-worker] Job :test-job1 (id=1) RUNNING"
                          ":info-[sample-worker] Job :test-job1 (id=1) COMPLETED after 10ms"
-                         ":info-[sample-worker] 1 jobs processed at 100 jobs per second. 0 failed."
+                         ":info-[sample-worker] 1 jobs processed at 100.00 jobs per second. 0 failed."
                          ":info-[sample-worker] No more jobs available. Exiting"])
             "running and completing of job logged")
         (is (= job-table-data ())
@@ -373,7 +373,7 @@
                          ":info-[sample-worker] Job :test-job-with-all-hooks (id=1) RUNNING"
                          ":error-[sample-worker] Job :test-job-with-all-hooks (id=1) FAILED to run.  Last exception:\nException: job is throwing in finally"
                          ":info-[sample-worker] Job :test-job-with-all-hooks (id=1) Rescheduled at Sun, 01 Jan 2017 13:00:01 +0000"
-                         ":info-[sample-worker] 1 jobs processed at 100 jobs per second. 1 failed."
+                         ":info-[sample-worker] 1 jobs processed at 100.00 jobs per second. 1 failed."
                          ":info-[sample-worker] No more jobs available. Exiting"])
             "Job fails and is rescheduled")
         (is (= job-table-data [{:locked-by nil,
@@ -407,7 +407,7 @@
                          ":info-[sample-worker] Job :test-job-with-all-hooks (id=1) RUNNING"
                          ":error-[sample-worker] Job :test-job-with-all-hooks (id=1) FAILED to run.  Last exception:\nException: job is throwing in exception"
                          ":info-[sample-worker] Job :test-job-with-all-hooks (id=1) Rescheduled at Sun, 01 Jan 2017 13:00:01 +0000"
-                         ":info-[sample-worker] 1 jobs processed at 100 jobs per second. 1 failed."
+                         ":info-[sample-worker] 1 jobs processed at 100.00 jobs per second. 1 failed."
                          ":info-[sample-worker] No more jobs available. Exiting"])
             "Job fails and is rescheduled")
         (is (= job-table-data [{:locked-by nil,

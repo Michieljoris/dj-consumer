@@ -64,10 +64,11 @@
     (let [{:keys [runtime]
            {:keys [success fail]} :result} (u/runtime rr/run-job-batch env)
           total-runs (+ success fail)
-          jobs-per-second (int (/ total-runs (/ runtime 1000.0)))
+          jobs-per-second (/ total-runs (/ runtime 1000.0))
           exit-on-complete? (and (zero? total-runs) exit-on-complete?)]
       (if (pos? total-runs)
-        (logger env :info (str total-runs " jobs processed at " jobs-per-second
+        (logger env :info (str total-runs " jobs processed at "
+                               (format "%.2f" jobs-per-second)
                                " jobs per second. " fail " failed.")))
       (when (= @worker-status :running)
         (if exit-on-complete?
@@ -298,3 +299,5 @@
 ;;   (throw (Exception. "bla"))
 ;;   (if (< i 10)
 ;;     (recur (inc i))))
+;; (into [] (filter even?) [1 2 3 4 5])
+;; (filter even?)

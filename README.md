@@ -74,6 +74,8 @@ set to {:failed? true}
 
 For lifecycle see dj-consumer.job
 
+For example job and debugging see dj-consumer.sample-job
+
 ### Develop
 
     boot watch-and-install

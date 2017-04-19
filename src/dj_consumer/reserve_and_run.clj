@@ -184,7 +184,6 @@
                              :fail-reason "yaml parse error"
                              )) ;fail job immediately, yaml is no good.
           (do ;Panic! Reserving job went wrong!!!
-            (timbre/info e)
              (logger env :error (str "Error while trying to reserve a job: \n" (u/exception-str e)))
             (let [fail-count (swap! failed-reserved-count inc)]
               (when (>= fail-count max-failed-reserve-count)

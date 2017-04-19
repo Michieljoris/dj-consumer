@@ -113,12 +113,13 @@
                                      jobs))}))
 
 (defn setup-job-test-db [{:keys [mysql-conn db-conn db-config] :as defaults} fixtures]
-  (let [fixtures (make-job-fixtures defaults fixtures)]
-    (setup-test-db mysql-conn
-                   db-conn
-                   db-config
-                   fixtures)
-    fixtures))
+  (if (some? fixtures)
+    (let [fixtures (make-job-fixtures defaults fixtures)]
+      (setup-test-db mysql-conn
+                     db-conn
+                     db-config
+                     fixtures)
+      fixtures)))
 
 (defn prepare-for-test [defaults fixtures]
   (let [worker (worker/make-worker (:worker-config defaults))
@@ -187,7 +188,7 @@
                                      (async/put! status-change-ch status))))
 
 (defn setup-worker-test [{:keys [worker-config job-records]}]
-  (let [status-change-ch (async/chan)
+  (let [status-change-ch (async/chan 1 (filter #(contains? #{:stopped :timeout :done :crashed} %)))
         log-atom (atom [])
         {:keys [env worker fixtures]}
         (prepare-for-test-merge-worker-config defaults
