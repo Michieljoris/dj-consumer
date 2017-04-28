@@ -17,7 +17,7 @@ install:
   - chmod +x ~/bin/boot
   - git clone -b v0.1.2 --single-branch git@github.com:digitalechecklisten/dc-util.git
   - (cd dc-util;boot install-local)
-  - git clone -b v0.1.2 --single-branch git@github.com:digitalechecklisten/bilby-parser.git
+  - git clone -b v0.1.5 --single-branch git@github.com:digitalechecklisten/bilby-parser.git
   - (cd bilby-parser;boot install-local)
 
 

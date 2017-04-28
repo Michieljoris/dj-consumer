@@ -1,3 +1,5 @@
+(def +version+ "0.1.0")
+
 (set-env!
  :resource-paths #{"src" "test"}
  :dependencies '[
@@ -10,7 +12,7 @@
                  [clj-time "0.13.0"]
 
                  [dc-util "0.1.2"]
-                 [bilby-parser "0.1.2"]
+                 [bilby-parser "0.1.5"]
 
                  ;; Sql queries
                  [mysql/mysql-connector-java "5.1.40"]
@@ -57,7 +59,7 @@
 
 (task-options!
  pom {:project 'dj-consumer
-       :version "0.1.0"})
+      :version +version+})
 
 
 (deftask watch-and-install []
