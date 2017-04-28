@@ -1,38 +1,52 @@
 (ns dj-consumer.database.core
-  (:require
-   [dj-consumer.util :as u]
+  (:require [bilby.database.clauses :as db-clauses]
+            [clj-time.core :as t]
+            [cuerdas.core :as str]
+            [digicheck.util :as u]
+            [clj-time.jdbc] ;;IMPORTANT: deals with sql datetime. Don't remove!!!!
+            [jansi-clj.core :refer :all]
+            [taoensso.timbre :as timbre :refer [info]]))
 
-   [dj-consumer.database.clauses :as db-clauses]
-   [dj-consumer.database.queries]
-   [dj-consumer.database.connection :as db-conn]
-   [clj-time.jdbc]
-
-   ;; String manipulation
-   [cuerdas.core :as str]
-
-   [clj-time.core :as t]
-   ;; logging
-   [taoensso.timbre :as timbre
-    :refer (log  trace  debug  info  warn  error  fatal  report color-str
-                 logf tracef debugf infof warnf errorf fatalf reportf
-                 spy get-env log-env)]
-   [clojure.pprint :refer (pprint)]
-   [jansi-clj.core :refer :all]
-   )
-  )
+(defn table-name
+  "Table names are singular hyphenated and keywords. This fn returns
+  the actual table name by looking it up in db-config.schema in env or
+  otherwise just adds an 's'. If table is already a string it is
+  returned as is.Returns a string or nil."
+  [{:keys [db-config] :as env} table]
+  (cond
+    (keyword? table) (-> (or (get-in db-config [:schema table :table-name])
+                             (if (:pluralize-table-names? db-config)
+                               (str (name table) "s")
+                               table))
+                         name
+                         u/hyphen->underscore)
+    (string? table) table))
 
 (defn make-query-params
   "Takes all the elements need to build and query and returns a data
   map ready to pass to a hugsql query"
   [env {:keys [table cols where limit order-by updates]}]
-  {:table table
-   :cols cols
-   :updates updates
-   :where-clause (if where (db-clauses/conds->sqlvec env table "" nil
-                                                     (db-clauses/conds->sqlvec env table "" nil nil where)
-                                                     where))
-   :limit-clause (if limit (db-clauses/make-limit-clause env limit))
-   :order-by-clause (if order-by (db-clauses/order-by->sqlvec env table "" nil order-by))})
+  (let [table-name (table-name env table)]
+    {:table table
+     :cols cols
+     :updates updates
+     :where-clause (if where (db-clauses/conds->sqlvec {:table table
+                                                        :table-name table-name
+                                                        :alias-prefix ""
+                                                        :props nil
+                                                        :cols (db-clauses/conds->sqlvec {:table table
+                                                                                         :table-name table-name
+                                                                                         :alias-prefix ""
+                                                                                         :props nil
+                                                                                         :cols nil
+                                                                                         :conds where})
+                                                        :conds where}))
+     :limit-clause (if limit (db-clauses/make-limit-clause limit nil))
+     :order-by-clause (if order-by (db-clauses/order-by->sqlvec {:table table
+                                                                 :table-name table-name
+                                                                 :alias-prefix ""
+                                                                 :cols nil
+                                                                 :order-by order-by}))}))
 
 (defn make-reserve-scope
   "Takes an environment and returns a map that defines the scope that
@@ -79,6 +93,7 @@
     (merge reserve-scope {:updates {:locked-by worker-id
                                     :locked-at now}})))
 
+;;TODO: use sql fn from bilby.database.query in bilby-parser
 (defn sql
   "Executes fun with db connection as second argument "
   [env fun params]
@@ -86,22 +101,22 @@
         params (condp = fun
                  :select-all-from
                  (assoc params
-                        :table (u/table-name env (:table params))
+                        :table (table-name env (:table params))
                         )
                  :get-cols-from-table
                  (assoc params
-                        :table (u/table-name env (:table params))
+                        :table (table-name env (:table params))
                         :cols cols)
                  :now {}
                  :update-record
                  (assoc params
-                        :table (u/table-name env (:table params))
+                        :table (table-name env (:table params))
                         :updates
                         (u/transform-keys (comp keyword u/hyphen->underscore name) (:updates params))
                         )
                  :delete-record
                  (assoc params
-                        :table (u/table-name env (:table params))
+                        :table (table-name env (:table params))
                         )
                  (throw (ex-info"Unknown sql function" {:fun fun})))
         fun (or (:fun params) fun)      ;if we decided to use a alternative fun, use that

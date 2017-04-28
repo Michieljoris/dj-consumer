@@ -1,4 +1,4 @@
-(ns dj-consumer.sample-job              ;
+(ns dj-consumer.sample-job
   (:require
    [dj-consumer.job :as job]
 
@@ -7,9 +7,9 @@
    ;;Add following requires for debugging the job
    [dj-consumer
     [test-util :as tu]
-    [util :as u]
     [reserve-and-run :as rr]
     [worker :as worker]]
+   [digicheck.util :as u]
    [clj-time.core :as time]
    [clojure.core.async :as async]
 

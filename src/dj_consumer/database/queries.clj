@@ -1,8 +1,6 @@
 (ns dj-consumer.database.queries
   (:require
-   [hugsql.core :as hugsql]
-   [yesql.core :as yesql]
-   ))
+   [hugsql.core :as hugsql]))
 
 (def sql-file "dj_consumer/database/hugsql.sql" )
 

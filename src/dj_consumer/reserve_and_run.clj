@@ -1,9 +1,11 @@
 (ns dj-consumer.reserve-and-run
   (:require [clojure.core.async :as async]
+            [yaml.core :as yaml]
+            [cuerdas.core :as str]
             [dj-consumer
              [humanize :as humanize]
-             [job :as job]
-             [util :as u]]
+             [job :as job]]
+            [digicheck.util :as u]
             [dj-consumer.database.core :as db]
             [taoensso.timbre :as timbre :refer [log]]))
 
@@ -140,6 +142,28 @@
       (handle-run-exception env job e)
       :fail)))
 
+(defn remove-!ruby-annotations [s]
+  (str/replace s #"!ruby/[^\s]*" ""))
+
+(defn extract-rails-struct-name[s]
+  (second (re-find  #"--- *!ruby\/struct:([^\s]*)" s)))
+
+(defn extract-rails-obj-name[s]
+  (second (re-find  #"object: *!ruby\/object:([^\s]*)" s)))
+
+(defn parse-ruby-yaml [s]
+  (let [s (or s "")
+        struct-name (extract-rails-struct-name s)
+        object-name (extract-rails-obj-name s)
+        data  (yaml/parse-string
+               (remove-!ruby-annotations s))
+        method-name (:method_name data)]
+    {:name (or (u/camel->keyword struct-name)
+               (if (and object-name method-name) (u/camel->keyword object-name method-name))
+               :unknown-job-name)
+     :payload data}
+    ))
+
 (defn reserve-job
   "Looks for and locks a suitable job in one transaction. Returns that
   job if found or otherwise nil. Handler column of job record is
@@ -157,7 +181,7 @@
                                                               [:failed-at :is :null]]]})
             ;;Retrieve locked record
             job (first (db/sql env :get-cols-from-table query-params))
-            job (merge job (try (u/parse-ruby-yaml (:handler job))
+            job (merge job (try (parse-ruby-yaml (:handler job))
                                 (catch Exception e
                                   (throw (ex-info "Exception thrown parsing job yaml"
                                                   {:e e

@@ -6,8 +6,8 @@
              [test-util :as tu]
              [job :as job]
              [reserve-and-run :as tn]
-             [util :as u]
              [worker :as worker]]
+            [digicheck.util :as u]
             [dj-consumer.database
              [connection :as db-conn]
              [core :as db]]
@@ -15,8 +15,7 @@
             [taoensso.timbre :as timbre
              :refer (log  trace  debug  info  warn fatal  report color-str
                           logf tracef debugf infof warnf errorf fatalf reportf
-                          spy get-env log-env)]
-            ))
+                          spy get-env log-env)]))
 
 ;;TODO
 (deftest default-logger
@@ -41,7 +40,6 @@
        {:locked-by "sample-worker2", :locked-at (u/sql-time some-time) :id 3}]))))
 
 (defmethod job/failed :test-failed [{:keys [invoked?] :as job}]
-  (timbre/info "failed!!!!")
   (reset! invoked? true))
 
 (defmethod job/failed :test-thrown [{:keys [invoked? name]}]
@@ -55,7 +53,7 @@
                                           ])
         job {:name :test-failed :id 1 :attempts 1 :invoked? (atom false)}
         now (u/now)]
-    (with-redefs [dj-consumer.util/now (constantly now)]
+    (with-redefs [digicheck.util/now (constantly now)]
       (tn/failed env job)
       (is  @(:invoked? job) "job failed hook is invoked")
       (is (=
@@ -83,8 +81,8 @@
         job2 {:name :job2 :id 2 :delete-if-failed? false :attempts 2 :fail-reason "bar"}
         job3 {:name :test-thrown :id 3 :invoked? (atom false)}
         now (u/now)]
-    (with-redefs [dj-consumer.util/now (constantly now)
-                  dj-consumer.util/exception-str (fn [e] "some-exception-str" )]
+    (with-redefs [digicheck.util/now (constantly now)
+                  digicheck.util/exception-str (fn [e] "some-exception-str" )]
       (tn/failed env job1)
       (tn/failed env job2)
       (tn/failed env job3)
@@ -112,7 +110,7 @@
                                             :logger tu/test-logger})))
                           [{:locked-by "somebody" :locked-at now :run-at nil :failed-at nil :attempts nil}])
         job {:name :job1 :id 1 :attempts 1}]
-    (with-redefs [dj-consumer.util/now (constantly now)]
+    (with-redefs [digicheck.util/now (constantly now)]
       (tn/reschedule env job)
       (is (=
            (tu/job-table-data env)
@@ -256,7 +254,7 @@
         timeout-exception (ex-info "job1 exception" {:timed-out? true})
         timed-out? (atom nil)
         ]
-    (with-redefs [dj-consumer.util/exception-str (fn [e] (.getMessage e))
+    (with-redefs [digicheck.util/exception-str (fn [e] (.getMessage e))
                   dj-consumer.reserve-and-run/reschedule (fn [env job]
                                                   (swap! handle-called assoc :reschedule job))
                   dj-consumer.reserve-and-run/failed (fn [env job]
@@ -346,7 +344,7 @@
         job1 {:name :job1 :id 1 :attempts 2}
         job2 {:name :job2 :id 2 :attempts 2}
         some-exception (Exception. "job1 exception")]
-    (with-redefs [dj-consumer.util/runtime (fn [f & args] (apply f args)
+    (with-redefs [digicheck.util/runtime (fn [f & args] (apply f args)
                                              {:runtime 1})
                   dj-consumer.reserve-and-run/invoke-job-with-timeout
                   (fn [job]
@@ -388,6 +386,46 @@
                                    {:attempts 0, :failed-at nil, :priority 0, :id 3}])
           "job2 is not deleted"))))
 
+(deftest parse-ruby-yaml
+  (is (= (tn/parse-ruby-yaml
+          "--- !ruby/struct:InvitationExpirationReminderJob
+invitation_id: 882\nfoo: bar")
+         {:name :invitation-expiration-reminder-job,
+          :payload {:invitation_id 882,
+                    :foo "bar"}})
+      "extract proper name and payload if job handler is a struct")
+
+
+  (is (=
+       (tn/parse-ruby-yaml
+        "---
+  object:
+  raw_attributes:
+    id: 1
+    nested:
+      p1: 2 ")
+       {:name :unknown-job-name,
+        :payload {:object nil, :raw_attributes {:id 1, :nested {:p1 2}}}})
+      "Parse yaml properly")
+
+  (is (=
+       (tn/parse-ruby-yaml
+        "---
+  object: !ruby/object:User
+  method_name: foo !ruby/bla-bla
+  raw_attributes:
+    id: 1
+    nested:
+      p1: 2 ")
+       {:name :user/foo,
+        :payload {:object nil,
+                  :method_name "foo",
+                  :raw_attributes {:id 1, :nested {:p1 2}}}})
+      "Ignore ruby anotations, extract ruby object name and method and set on :name key and set payload")
+
+  (is (thrown? Exception (tn/parse-ruby-yaml "foo: bar\nbaz foo"))
+      "Incorrect yaml throws exception"))
+
 (def u-now (u/now))
 (def now (u/sql-time u-now))
 (def a-minute-ago (time/minus now (time/minutes 1)))
@@ -396,7 +434,7 @@
 (def five-hours-ago (time/minus now (time/hours 5)))
 
 (deftest reserve-job
-  (with-redefs [dj-consumer.util/now (constantly u-now)]
+  (with-redefs [digicheck.util/now (constantly u-now)]
     (let [{:keys [env worker fixtures]}
           (tu/prepare-for-test-merge-worker-config tu/defaults {} [])]
       (let [job (tn/reserve-job env)]
@@ -734,7 +772,7 @@ invitation_id: 882\nfoo: bar"
                                                     (:result job))
                   dj-consumer.reserve-and-run/failed (fn [env job]
                                                        (swap! fn-called assoc :failed job))
-                  dj-consumer.util/exception-str (constantly "some exception string")]
+                  digicheck.util/exception-str (constantly "some exception string")]
       (is (= (tn/reserve-and-run-one-job (assoc env :reserved-job
                                                 {:name "some-job"
                                                  :id 1

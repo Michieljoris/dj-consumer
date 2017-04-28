@@ -15,6 +15,11 @@ install:
   - export PATH=~/bin:$PATH
   - curl -L https://github.com/boot-clj/boot-bin/releases/download/latest/boot.sh -o ~/bin/boot
   - chmod +x ~/bin/boot
+  - git clone -b v0.1.2 --single-branch git@github.com:digitalechecklisten/dc-util.git
+  - (cd dc-util;boot install-local)
+  - git clone -b v0.1.2 --single-branch git@github.com:digitalechecklisten/bilby-parser.git
+  - (cd bilby-parser;boot install-local)
+
 
 env:
   global:

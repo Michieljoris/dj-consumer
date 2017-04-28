@@ -1,11 +1,16 @@
 (set-env!
  :resource-paths #{"src" "test"}
  :dependencies '[
+                 [org.clojure/clojure "1.8.0"]
+
                  [io.forward/yaml "1.0.6"]
 
                  [org.clojure/core.async "0.3.441"]
 
                  [clj-time "0.13.0"]
+
+                 [dc-util "0.1.2"]
+                 [bilby-parser "0.1.2"]
 
                  ;; Sql queries
                  [mysql/mysql-connector-java "5.1.40"]
@@ -24,8 +29,6 @@
                  [com.layerware/hugsql "0.4.7"]
                  ;; [honeysql "0.7.0"]
 
-                 [yesql "0.5.3"]
-
                  ;; String manipulation
                  [funcool/cuerdas "2.0.3"]
 
@@ -40,12 +43,16 @@
                  [com.taoensso/timbre      "4.8.0"]
                  ;; [com.taoensso/encore      "2.90.1"]
                  [jansi-clj "0.1.0"]
+                 [onetom/boot-lein-generate "0.1.3" :scope "test"]
                  ]
  )
 
+(require '[boot.lein])
+(boot.lein/generate)
+
 (require
  '[samestep.boot-refresh :refer [refresh]]
-  '[adzerk.boot-test :refer :all]
+ '[adzerk.boot-test :refer :all]
  )
 
 (task-options!
@@ -54,13 +61,23 @@
 
 
 (deftask watch-and-install []
+  (set-env! :source-paths #(conj % "test"))
   (comp
+   ;; (test)
    (repl :server true)
-   (refresh)
+   (refresh) ;;test dir added source-paths so (eftest) in run-all-tests is run
    (watch)
    (pom)
    (jar)
    (install)))
+
+(deftask repl-only []
+  (set-env! :source-paths #(conj % "test"))
+  (comp
+   ;; (test)
+   (repl :server true)
+   (refresh)
+   (wait)))
 
 (deftask install-local []
   (comp
