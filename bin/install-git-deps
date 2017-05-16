@@ -4,10 +4,12 @@ bilby_libs_version=v0.1.6
 
 mkdir -p tmp
 
-(cd tmp
-git clone -b $dc_util_version --single-branch git@github.com:digitalechecklisten/dc-util.git;
-(cd dc-util;boot install-local))
+(cd tmp;
+ rm -rf dc-util;
+ git clone -b $dc_util_version --single-branch git@github.com:digitalechecklisten/dc-util.git;
+ (cd dc-util;boot install-local))
 
-(cd tmp
-git clone -b $bilby_libs_version --single-branch git@github.com:digitalechecklisten/bilby_libs.git;
-(cd dc-util;boot install-local))
+(cd tmp;
+ rm -rf bilby-libs;
+ git clone -b $bilby_libs_version --single-branch git@github.com:digitalechecklisten/bilby-libs.git;
+ (cd bilby-libs;bin/install-git-deps;boot install-local))

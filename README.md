@@ -88,12 +88,21 @@ Besides being able to start a repl in this repo, if you start your (boot) projec
 any edits in dj-consumer source will compiled, installed and checked out again
 in your project.
 
+#### Bumping and pushing new version to github
+
+Bump +version+ at top of build.boot file to some x.x.x
+
+Commit change.
+
+git tag vx.x.x
+
+git push origin : vx.x.x
+
 ### Test
 
     boot test
 
 ### TODO
 
-- This lib uses some util fns and the db clauses namespace from bilby. Extract
-  this stuff into libs and reuse. Whole of bilby should be collection of libs really.
 - catch INT?
+- ideas for further development: https://github.com/b-ryan/farmhand

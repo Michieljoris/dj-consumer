@@ -28,3 +28,4 @@ build.json
 node_modules
 bower_components
 src-dev/scratch
+tmp
