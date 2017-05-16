@@ -1,4 +1,4 @@
-(def +version+ "0.1.0")
+(def +version+ "0.1.1")
 
 (set-env!
  :resource-paths #{"src" "test"}
@@ -11,6 +11,7 @@
 
                  [clj-time "0.13.0"]
 
+                 ;;Git dependencies. Run bin/install-git-deps first
                  [dc-util "0.1.3"]
                  [bilby-libs "0.1.6"]
 
