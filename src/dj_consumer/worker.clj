@@ -5,7 +5,7 @@
             [cuerdas.core :as str]
             [dj-consumer
              [reserve-and-run :as rr]]
-            [digicheck.util :as u]
+            [digicheck.common.util :as u]
             [dj-consumer.database
              [connection :as db-conn]
              [core :as db]]

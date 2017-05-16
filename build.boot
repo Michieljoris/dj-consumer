@@ -11,8 +11,8 @@
 
                  [clj-time "0.13.0"]
 
-                 [dc-util "0.1.2"]
-                 [bilby-parser "0.1.5"]
+                 [dc-util "0.1.3"]
+                 [bilby-libs "0.1.6"]
 
                  ;; Sql queries
                  [mysql/mysql-connector-java "5.1.40"]

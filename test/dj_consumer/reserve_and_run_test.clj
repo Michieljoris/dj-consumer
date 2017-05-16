@@ -7,7 +7,7 @@
              [job :as job]
              [reserve-and-run :as tn]
              [worker :as worker]]
-            [digicheck.util :as u]
+            [digicheck.common.util :as u]
             [dj-consumer.database
              [connection :as db-conn]
              [core :as db]]
@@ -53,7 +53,7 @@
                                           ])
         job {:name :test-failed :id 1 :attempts 1 :invoked? (atom false)}
         now (u/now)]
-    (with-redefs [digicheck.util/now (constantly now)]
+    (with-redefs [digicheck.common.util/now (constantly now)]
       (tn/failed env job)
       (is  @(:invoked? job) "job failed hook is invoked")
       (is (=
@@ -81,8 +81,8 @@
         job2 {:name :job2 :id 2 :delete-if-failed? false :attempts 2 :fail-reason "bar"}
         job3 {:name :test-thrown :id 3 :invoked? (atom false)}
         now (u/now)]
-    (with-redefs [digicheck.util/now (constantly now)
-                  digicheck.util/exception-str (fn [e] "some-exception-str" )]
+    (with-redefs [digicheck.common.util/now (constantly now)
+                  digicheck.common.util/exception-str (fn [e] "some-exception-str" )]
       (tn/failed env job1)
       (tn/failed env job2)
       (tn/failed env job3)
@@ -110,7 +110,7 @@
                                             :logger tu/test-logger})))
                           [{:locked-by "somebody" :locked-at now :run-at nil :failed-at nil :attempts nil}])
         job {:name :job1 :id 1 :attempts 1}]
-    (with-redefs [digicheck.util/now (constantly now)]
+    (with-redefs [digicheck.common.util/now (constantly now)]
       (tn/reschedule env job)
       (is (=
            (tu/job-table-data env)
@@ -254,7 +254,7 @@
         timeout-exception (ex-info "job1 exception" {:timed-out? true})
         timed-out? (atom nil)
         ]
-    (with-redefs [digicheck.util/exception-str (fn [e] (.getMessage e))
+    (with-redefs [digicheck.common.util/exception-str (fn [e] (.getMessage e))
                   dj-consumer.reserve-and-run/reschedule (fn [env job]
                                                   (swap! handle-called assoc :reschedule job))
                   dj-consumer.reserve-and-run/failed (fn [env job]
@@ -344,7 +344,7 @@
         job1 {:name :job1 :id 1 :attempts 2}
         job2 {:name :job2 :id 2 :attempts 2}
         some-exception (Exception. "job1 exception")]
-    (with-redefs [digicheck.util/runtime (fn [f & args] (apply f args)
+    (with-redefs [digicheck.common.util/runtime (fn [f & args] (apply f args)
                                              {:runtime 1})
                   dj-consumer.reserve-and-run/invoke-job-with-timeout
                   (fn [job]
@@ -434,7 +434,7 @@ invitation_id: 882\nfoo: bar")
 (def five-hours-ago (time/minus now (time/hours 5)))
 
 (deftest reserve-job
-  (with-redefs [digicheck.util/now (constantly u-now)]
+  (with-redefs [digicheck.common.util/now (constantly u-now)]
     (let [{:keys [env worker fixtures]}
           (tu/prepare-for-test-merge-worker-config tu/defaults {} [])]
       (let [job (tn/reserve-job env)]
@@ -772,7 +772,7 @@ invitation_id: 882\nfoo: bar"
                                                     (:result job))
                   dj-consumer.reserve-and-run/failed (fn [env job]
                                                        (swap! fn-called assoc :failed job))
-                  digicheck.util/exception-str (constantly "some exception string")]
+                  digicheck.common.util/exception-str (constantly "some exception string")]
       (is (= (tn/reserve-and-run-one-job (assoc env :reserved-job
                                                 {:name "some-job"
                                                  :id 1

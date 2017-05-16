@@ -10,7 +10,7 @@
 
    ;; String manipulation
    [cuerdas.core :as str]
-   [digicheck.util :as u :refer [includes? transform-keys underscore->hyphen hyphen->underscore]]
+   [digicheck.common.util :as u :refer [includes? transform-keys underscore->hyphen hyphen->underscore]]
 
    [clojure.set :as set]
    [clj-time.core :as time]
@@ -211,7 +211,7 @@
         (setup-worker-test
          {:worker-config (merge worker-config {:exit-on-complete? true})
           :job-records job-records})] ;this'll insert a default job
-    (with-redefs [digicheck.util/exception-str
+    (with-redefs [digicheck.common.util/exception-str
                   (fn [e] (str "Exception: " (.getMessage e)))]
       (worker/start worker)
       (loop []

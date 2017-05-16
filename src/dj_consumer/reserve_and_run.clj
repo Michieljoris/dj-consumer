@@ -5,7 +5,7 @@
             [dj-consumer
              [humanize :as humanize]
              [job :as job]]
-            [digicheck.util :as u]
+            [digicheck.common.util :as u]
             [dj-consumer.database.core :as db]
             [taoensso.timbre :as timbre :refer [log]]))
 
@@ -176,7 +176,7 @@
     (if (pos? locked-job-count)
       (let [query-params (db/make-query-params env
                                                {:table table
-                                                :where [:and [[:locked-at := (u/to-sql-time-string now)]
+                                                :where [:and [[:locked-at := (db/to-sql-time-string now)]
                                                               [:locked-by := worker-id]
                                                               [:failed-at :is :null]]]})
             ;;Retrieve locked record

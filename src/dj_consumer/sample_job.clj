@@ -9,7 +9,7 @@
     [test-util :as tu]
     [reserve-and-run :as rr]
     [worker :as worker]]
-   [digicheck.util :as u]
+   [digicheck.common.util :as u]
    [clj-time.core :as time]
    [clojure.core.async :as async]
 

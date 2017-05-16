@@ -9,7 +9,7 @@
              [job :as job]
              [test-util :as tu]
              [worker :as worker]]
-            [digicheck.util :as u]
+            [digicheck.common.util :as u]
             [taoensso.timbre :as timbre :refer [info]]
             [clojure.pprint :refer [pprint]]
             ))
@@ -129,8 +129,8 @@
 
 (deftest worker-one-job-with-run-at
   (testing "One job in table, with run-at set to now, but no job name (handler is nil)"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime]
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime]
       (let [{:keys [status fixtures log-atom job-table-data methods-called]}
             (tu/run-worker-once {} [{:run-at tu/now :locked-by nil
                                      :locked-at nil :priority 0 :attempts 0 :handler nil
@@ -161,8 +161,8 @@
 
 (deftest worker-run-one-job-with-run-method
   (testing "One job in table, with run-at set to now, wth existing run method for job name as set in handler"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job1 {:run-at tu/now :locked-by nil
                   :locked-at nil :priority 0 :attempts 0
@@ -185,8 +185,8 @@
 
 (deftest worker-run-multiple-jobs
   (testing "One job in table, with run-at set to now, wth existing run method for job name as set in handler"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job1 {:run-at tu/now :locked-by nil
                   :locked-at nil :priority 0 :attempts 0
@@ -235,8 +235,8 @@
 
 (deftest worker-run-job-with-all-hooks-defined
   (testing "job with all hooks defined"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job {:run-at tu/now :locked-by nil
                  :locked-at nil :priority 0 :attempts 0 :failed-at nil
@@ -260,8 +260,8 @@
 
 (deftest worker-run-job-with-all-hooks-defined-config-throws
   (testing ""
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job {:run-at tu/now :locked-by nil
                  :locked-at nil :priority (throw-flag [:config]) :attempts 0 :failed-at nil
@@ -313,8 +313,8 @@
 (deftest worker-run-one-job-with-run-method-but-locked-already
   (testing "One job in table, with run-at set to now, wth existing run method
   for job name as set in handler, but job is locked already"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job1 {:run-at tu/now :locked-by "some-other-worker"
                   :locked-at tu/now :priority 0 :attempts 0
@@ -335,8 +335,8 @@
 (deftest worker-run-one-job-with-run-method-but-locked-five-hours-ago
   (testing "One job in table, with run-at set to now, wth existing run method
   for job name as set in handler, job is locked already, but more than 4 hours ago"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job1 {:run-at tu/now :locked-by "some-other-worker"
                   :locked-at tu/five-hours-ago :priority 0 :attempts 0
@@ -360,8 +360,8 @@
 
 (deftest worker-run-job-with-all-hooks-defined-finally-throws
   (testing "Job that throws in finally fails and is rescheduled"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job {:run-at tu/now :locked-by nil
                  :locked-at nil :priority (throw-flag [:finally]) :attempts 0 :failed-at nil
@@ -393,8 +393,8 @@
 
 (deftest worker-run-job-with-all-hooks-defined-run-and-exception-throw
   (testing "Job that throws in exception (again) still just fails and is rescheduled"
-    (with-redefs [digicheck.util/now (constantly tu/u-now)
-                  digicheck.util/runtime  tu/mock-runtime
+    (with-redefs [digicheck.common.util/now (constantly tu/u-now)
+                  digicheck.common.util/runtime  tu/mock-runtime
                   dj-consumer.job/invoke-hook invoke-hook]
       (let [job {:run-at tu/now :locked-by nil
                  :locked-at nil :priority (throw-flag [:run :exception]) :attempts 0 :failed-at nil
@@ -450,7 +450,7 @@
 ;;                        :failed-at nil :queue nil}]})]
 
 ;;   (with-redefs [dj-consumer.util/now (constantly tu/u-now)
-;;                 digicheck.util/runtime  tu/mock-runtime
+;;                 digicheck.common.util/runtime  tu/mock-runtime
 ;;                 dj-consumer.job/invoke-hook invoke-hook
 ;;                 dj-consumer.util/exception-str (fn [e]
 ;;                                                  (str "Exception: " (.getMessage e)))]

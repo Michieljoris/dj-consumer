@@ -1,11 +1,17 @@
 (ns dj-consumer.database.core
   (:require [bilby.database.clauses :as db-clauses]
             [clj-time.core :as t]
+            [clj-time.format :as time-format]
             [cuerdas.core :as str]
-            [digicheck.util :as u]
+            [digicheck.common.util :as u]
             [clj-time.jdbc] ;;IMPORTANT: deals with sql datetime. Don't remove!!!!
             [jansi-clj.core :refer :all]
             [taoensso.timbre :as timbre :refer [info]]))
+
+(def sql-formatter (time-format/formatter "yyyy-MM-dd HH:mm:ss"))
+
+(defn to-sql-time-string [t]
+   (time-format/unparse sql-formatter t))
 
 (defn table-name
   "Table names are singular hyphenated and keywords. This fn returns
@@ -83,8 +89,8 @@
   [{:keys [worker-id max-run-time reserve-scope] :as env} now]
   {:pre [(string? worker-id)]}
   (let [now-minus-max-run-time (t/minus now (t/seconds max-run-time))
-        now-minus-max-run-time (u/to-sql-time-string now-minus-max-run-time)
-        now (u/to-sql-time-string now)
+        now-minus-max-run-time (to-sql-time-string now-minus-max-run-time)
+        now (to-sql-time-string now)
         reserve-scope (update reserve-scope :where-clause
                               #(mapv (fn [e] (condp = e
                                                "run-at-before" now
@@ -151,11 +157,11 @@
 ;;                                           ;; :db-name "chinchilla_development"
 ;;                                           })})
 ;; (sql env :now nil)
-;; (sql env :update-record {:table :delayed-job :updates {:failed-at (u/to-sql-time-string (t/now))}})
+;; (sql env :update-record {:table :delayed-job :updates {:failed-at (to-sql-time-string (t/now))}})
 ;; (do
 ;;   (def r (sql env :get-cols-from-table  (make-query-params env {:table :delayed-job
 ;;                                                             :cols [:id :failed-at :run-at]
-;;                                                             :where [:run-at :< (u/to-sql-time-string (t/now))]})))
+;;                                                             :where [:run-at :< (to-sql-time-string (t/now))]})))
 ;;   (pprint (map #(select-keys % [:id :failed-at :run-at]) r)))
 
 ;; (unlock-job env {:id 2})
