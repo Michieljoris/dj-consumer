@@ -13,6 +13,8 @@
 (defn to-sql-time-string [t]
    (time-format/unparse sql-formatter t))
 
+;;TODO: there's a table-name fb in bilby-libs/bilby.database.inspect. But it's not
+;;compatible with this one.
 (defn table-name
   "Table names are singular hyphenated and keywords. This fn returns
   the actual table name by looking it up in db-config.schema in env or
@@ -141,13 +143,6 @@
         :now (first (vals (first result)))
         (u/transform-keys (comp keyword u/underscore->hyphen name) result)))))
 
-;; (def n (sql :now nil))
-;; (pprint n)
-;; (def n2 (t/now))
-;; (pprint n2)
-;; (t/plus n2 (t/seconds 3600))
-;; ;
-;;                                         => #inst "2017-04-06T23:15:07.000000000-00:00"
 ;; (def env {:sql-log? true
 ;;           :table :delayed-job
 ;;           :db-conn (db-conn/make-db-conn {:user "root"
@@ -156,12 +151,9 @@
 ;;                                           :db-name "chin_minimal"
 ;;                                           ;; :db-name "chinchilla_development"
 ;;                                           })})
-;; (sql env :now nil)
 ;; (sql env :update-record {:table :delayed-job :updates {:failed-at (to-sql-time-string (t/now))}})
 ;; (do
 ;;   (def r (sql env :get-cols-from-table  (make-query-params env {:table :delayed-job
 ;;                                                             :cols [:id :failed-at :run-at]
 ;;                                                             :where [:run-at :< (to-sql-time-string (t/now))]})))
 ;;   (pprint (map #(select-keys % [:id :failed-at :run-at]) r)))
-
-;; (unlock-job env {:id 2})

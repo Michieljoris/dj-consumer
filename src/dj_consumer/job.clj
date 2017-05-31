@@ -53,30 +53,3 @@
   [hook job]
   (let [hook (resolve (symbol (str "dj-consumer.job/" (name hook))))]
     (hook job)))
-
-(invoke-hook :config {:name "bla"})
-
-
-
-
-
-;; (defn invoke-hook
-;;   "Calls hook on job with job and any extra args"
-;;   [method job]
-;;   (method job))
-
-;; (invoke-hook failed {:name :test-failed})
-;; (failed {:name :test-thrown})
-
-
-;;   (defn invoke-hook [method job & args]
-;;     (apply method (into [(:name job) job] args)))
-
-;; (defmulti job-hook (fn [hook job] [hook (:name job)]))
-;; (defmethod job-hook [:config :bar] [hook job] [hook job])
-;; (defmethod job-hook [:run:bar] [hook job] [hook job])
-#_(job-hook :failed {:name :bar})
-
-;; (defmethod job [:send-email :run]
-
-;;   )

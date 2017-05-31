@@ -11,9 +11,11 @@
 
                  [clj-time "0.13.0"]
 
-                 ;;Git dependencies. Run bin/install-git-deps first
+                 ;;>> git dependencies. Make sure to update bin/install-git-deps as well
                  [dc-util "0.1.3"]
                  [bilby-libs "0.1.6"]
+                 ;;<< end git deps
+
 
                  ;; Sql queries
                  [mysql/mysql-connector-java "5.1.40"]
